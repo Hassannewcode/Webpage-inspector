@@ -17,10 +17,11 @@ const PROXIES = [
 /**
  * Wraps the fetch call with a proxy and handles rotating through the proxy list on failure.
  * @param url The URL to fetch.
- *- @param proxyIndex The current index in the PROXIES array.
+ * @param options The fetch options including custom headers.
+ * @param proxyIndex The current index in the PROXIES array.
  * @returns A promise that resolves with the Response object.
  */
-async function fetchWithProxy(url: string, proxyIndex = 0): Promise<Response> {
+async function fetchWithProxy(url: string, options: RequestInit, proxyIndex = 0): Promise<Response> {
     if (proxyIndex >= PROXIES.length) {
         throw new Error('All proxies failed.');
     }
@@ -31,16 +32,17 @@ async function fetchWithProxy(url: string, proxyIndex = 0): Promise<Response> {
                        proxy + url;
     
     try {
-        const response = await fetch(proxiedUrl);
+        // Note: some proxies may not forward all headers. allorigins.win is known to strip some.
+        const response = await fetch(proxiedUrl, options);
         if (!response.ok) {
             // If this proxy gives a specific error (like 404, 500), try the next one.
             console.warn(`Proxy ${proxy} returned status ${response.status}. Trying next...`);
-            return fetchWithProxy(url, proxyIndex + 1);
+            return fetchWithProxy(url, options, proxyIndex + 1);
         }
         return response;
     } catch (err) {
         console.warn(`Proxy ${proxy} failed to connect for ${url}. Trying next...`);
-        return fetchWithProxy(url, proxyIndex + 1);
+        return fetchWithProxy(url, options, proxyIndex + 1);
     }
 }
 
@@ -49,24 +51,22 @@ async function fetchWithProxy(url: string, proxyIndex = 0): Promise<Response> {
  * Fetches a URL, using a cache to avoid redundant requests.
  * All requests are sent via a proxy to bypass browser CORS restrictions.
  * @param url The URL to fetch.
+ * @param options The fetch options including custom headers.
  * @param forceFresh If true, bypasses the cache and re-fetches the resource.
  */
-async function cachedFetch(url: string, forceFresh = false): Promise<Response> {
+async function cachedFetch(url: string, options: RequestInit, forceFresh = false): Promise<Response> {
     if (fetchCache.has(url) && !forceFresh) {
         return (await fetchCache.get(url)!).clone();
     }
 
-    const requestPromise = fetchWithProxy(url);
+    const requestPromise = fetchWithProxy(url, options);
     
     fetchCache.set(url, requestPromise);
     
     try {
         const response = await requestPromise;
-        // The response is already checked for .ok in fetchWithProxy.
-        // If it wasn't ok, an error would've been thrown after all proxies failed.
         return response.clone();
     } catch(e) {
-        // If the fetch itself fails (e.g., all proxies down), remove the promise from the cache.
         fetchCache.delete(url);
         throw e;
     }
@@ -75,6 +75,7 @@ async function cachedFetch(url: string, forceFresh = false): Promise<Response> {
 
 export const fetchWebsiteSource = async (
     url: string,
+    options: { headers: Record<string, string>, userAgent: string },
     onProgress: (progress: { message: string; downloaded: number; total: number }) => void,
     onWarning: (warning: { url: string; message: string }) => void
 ): Promise<{ zip: any; networkLog: NetworkLogEntry[]; failedUrls: string[]; internalLinks: string[] }> => {
@@ -85,34 +86,46 @@ export const fetchWebsiteSource = async (
     const failedUrls: string[] = [];
     const internalLinks = new Set<string>();
     
-    const downloadQueue = new Set<string>([url]);
-    const processedUrls = new Set<string>();
+    // The queue now stores objects to track initiators
+    const downloadQueue: { url: string, initiator: string }[] = [{ url, initiator: 'Initial Request' }];
+    const processedUrls = new Set<string>([url]);
 
     let downloadedCount = 0;
+    
+    const fetchOptions: RequestInit = {
+        headers: { ...options.headers },
+    };
+    if (options.userAgent) {
+        (fetchOptions.headers as Record<string,string>)['User-Agent'] = options.userAgent;
+    }
 
-    while (downloadQueue.size > 0) {
-        const currentUrl = downloadQueue.values().next().value;
-        downloadQueue.delete(currentUrl);
 
-        if (processedUrls.has(currentUrl)) {
-            continue;
-        }
-        processedUrls.add(currentUrl);
+    while (downloadQueue.length > 0) {
+        const { url: currentUrl, initiator } = downloadQueue.shift()!;
 
-        onProgress({ message: `Downloading: ${currentUrl}`, downloaded: downloadedCount, total: processedUrls.size + downloadQueue.size });
+        onProgress({ message: `Downloading: ${currentUrl}`, downloaded: downloadedCount, total: processedUrls.size });
 
         try {
-            const response = await cachedFetch(currentUrl);
+            const response = await cachedFetch(currentUrl, fetchOptions);
             const contentType = response.headers.get('content-type') || 'application/octet-stream';
             
+            const content = await response.blob();
+            const size = content.size;
+
             networkLog.push({
                 url: currentUrl,
-                status: 'success',
-                statusText: `${response.status} ${response.statusText}`,
+                status: response.status,
+                statusText: response.statusText,
                 contentType: contentType,
+                initiator,
+                size,
+                isError: !response.ok
             });
 
-            const content = await response.blob();
+            if (!response.ok) {
+                 throw new Error(`HTTP error! status: ${response.status}`);
+            }
+
             const relativePath = new URL(currentUrl).pathname.substring(1) || 'index.html';
             zip.file(relativePath, content);
 
@@ -122,7 +135,8 @@ export const fetchWebsiteSource = async (
                 const newResources = await findAllResources(contentType, textContent, currentUrl);
                 newResources.forEach(res => {
                     if (!processedUrls.has(res)) {
-                        downloadQueue.add(res);
+                        processedUrls.add(res);
+                        downloadQueue.push({ url: res, initiator: currentUrl });
                     }
                 });
                 
@@ -139,9 +153,12 @@ export const fetchWebsiteSource = async (
             failedUrls.push(currentUrl);
             networkLog.push({
                 url: currentUrl,
-                status: 'error',
-                statusText: errorMessage,
+                status: 0,
+                statusText: 'Download Failed',
                 contentType: 'unknown',
+                initiator,
+                size: 0,
+                isError: true
             });
             onWarning({ url: currentUrl, message: `Download failed. ${errorMessage}` });
         }
@@ -169,16 +186,25 @@ export const retryFailedDownloads = async (
         
         try {
             // Attempt 1: Re-fetch with proxies
-            const response = await cachedFetch(url, true); // forceFresh = true to retry
+            const response = await cachedFetch(url, {}, true); // forceFresh = true to retry
             if (!response.ok) throw new Error(`Retry failed with status: ${response.status}`);
             
             const contentType = response.headers.get('content-type') || 'application/octet-stream';
+            const content = await response.blob();
+            const size = content.size;
+
             const logIndex = networkLog.findIndex(entry => entry.url === url);
             if (logIndex > -1) {
-                networkLog[logIndex] = { url, status: 'success', statusText: `${response.status} ${response.statusText} (Retried)`, contentType };
+                networkLog[logIndex] = { 
+                    ...networkLog[logIndex],
+                    status: response.status, 
+                    statusText: `${response.statusText} (Retried)`, 
+                    contentType,
+                    size,
+                    isError: false,
+                };
             }
 
-            const content = await response.blob();
             const relativePath = new URL(url).pathname.substring(1) || new URL(url).hostname + '.html';
             zip.file(relativePath, content);
             
@@ -202,12 +228,21 @@ export const retryFailedDownloads = async (
                         if (!cdnResponse.ok) throw new Error(`CDN fetch failed with status: ${cdnResponse.status}`);
                         
                         const contentType = cdnResponse.headers.get('content-type') || 'application/octet-stream';
+                        const content = await cdnResponse.blob();
+                        const size = content.size;
+
                         const logIndex = networkLog.findIndex(entry => entry.url === url);
                         if (logIndex > -1) {
-                            networkLog[logIndex] = { url, status: 'success', statusText: `${cdnResponse.status} ${cdnResponse.statusText} (via AI CDN)`, contentType };
+                            networkLog[logIndex] = {
+                                ...networkLog[logIndex], 
+                                status: cdnResponse.status, 
+                                statusText: `${cdnResponse.statusText} (via AI CDN)`, 
+                                contentType,
+                                size,
+                                isError: false,
+                            };
                         }
 
-                        const content = await cdnResponse.blob();
                         const relativePath = new URL(url).pathname.substring(1) || new URL(url).hostname + '.html';
                         zip.file(relativePath, content);
 

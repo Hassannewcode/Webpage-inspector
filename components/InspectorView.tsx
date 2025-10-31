@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { NetworkLogEntry, ZippedFile, FileNode, AiChatMessage, TechStack, PageVitals } from '../types';
-import { runLighthouseAudit, analyzeTechStack, scanForApiEndpoints, getPageVitals, createAiChat, explainFile } from '../services/aiService';
+import { runLighthouseAudit, analyzeTechStack, getPageVitals, createAiChat, explainFile } from '../services/aiService';
 import { buildFileTree, formatBytes, getLanguageFromPath } from '../utils/fileUtils';
 import { formatCode, deobfuscate } from '../utils/prettify';
-import { DownloadIcon, RefreshCwIcon, FileTextIcon, ImageIcon, LoaderIcon, BotIcon, AlertTriangleIcon, ClipboardListIcon, DatabaseIcon, FileSearchIcon, SearchIcon, SparklesIcon, GaugeCircleIcon, ChevronRightIcon, FolderIcon, FolderOpenIcon, LayersIcon, NewspaperIcon, MessageSquareIcon, Wand2Icon, EyeIcon, XIcon, ShieldAlertIcon, SitemapIcon } from './Icons';
+import { DownloadIcon, RefreshCwIcon, FileTextIcon, ImageIcon, LoaderIcon, BotIcon, AlertTriangleIcon, ClipboardListIcon, NetworkIcon, FileSearchIcon, SearchIcon, SparklesIcon, GaugeCircleIcon, ChevronRightIcon, FolderIcon, FolderOpenIcon, LayersIcon, NewspaperIcon, MessageSquareIcon, Wand2Icon, EyeIcon, XIcon, ShieldAlertIcon, SitemapIcon } from './Icons';
 import { Chat } from '@google/genai';
 import { EthicsSurveyModal } from './EthicsSurveyModal';
 import { CerberusEngine } from '../features/security/CerberusEngine';
@@ -569,19 +569,42 @@ const FileExplorer: React.FC<{ zip: any, baseUrl: string }> = ({ zip, baseUrl })
 
 // --- ANALYSIS VIEW COMPONENT ---
 const AnalysisView: React.FC<{ zip: any, networkLog: NetworkLogEntry[], internalLinks: string[] }> = ({ zip, networkLog, internalLinks }) => {
-    type AnalysisTab = 'assets' | 'pages' | 'api' | 'tech' | 'vitals';
-    const [activeTab, setActiveTab] = useState<AnalysisTab>('assets');
+    type AnalysisTab = 'network' | 'pages' | 'tech' | 'vitals';
+    const [activeTab, setActiveTab] = useState<AnalysisTab>('network');
     const [analysisCache, setAnalysisCache] = useState<Record<string, any>>({});
     const [isLoading, setIsLoading] = useState<Record<string, boolean>>({});
     
-    // State for the new interactive API scanner
-    const [apiKeywords, setApiKeywords] = useState('');
-    const [apiResults, setApiResults] = useState<any[] | null>(null);
-    const [isApiLoading, setIsApiLoading] = useState(false);
-    const [apiError, setApiError] = useState<string | null>(null);
+    // State for Network tab filter
+    type FilterType = 'All' | 'Doc' | 'XHR' | 'JS' | 'CSS' | 'Img' | 'Font' | 'Other';
+    const [filter, setFilter] = useState<FilterType>('All');
+    
+    const getResourceType = (contentType: string): FilterType => {
+        if (contentType.includes('html')) return 'Doc';
+        if (contentType.includes('json') || contentType.includes('xml')) return 'XHR';
+        if (contentType.includes('javascript') || contentType.includes('application/ecmascript')) return 'JS';
+        if (contentType.includes('css')) return 'CSS';
+        if (contentType.startsWith('image/')) return 'Img';
+        if (contentType.startsWith('font/')) return 'Font';
+        return 'Other';
+    };
+
+    const filteredNetworkLog = useMemo(() => {
+        if (filter === 'All') return networkLog;
+        return networkLog.filter(entry => {
+            const type = getResourceType(entry.contentType);
+            if (filter === 'XHR' && type === 'XHR') return true;
+            if (filter === 'JS' && type === 'JS') return true;
+            if (filter === 'CSS' && type === 'CSS') return true;
+            if (filter === 'Img' && type === 'Img') return true;
+            if (filter === 'Doc' && type === 'Doc') return true;
+            if (filter === 'Font' && type === 'Font') return true;
+            if (filter === 'Other' && !['Doc', 'XHR', 'JS', 'CSS', 'Img', 'Font'].includes(type)) return true;
+            return false;
+        });
+    }, [networkLog, filter]);
 
     const runAnalysis = useCallback(async (type: AnalysisTab) => {
-        if (analysisCache[type] || type === 'api' || type === 'pages') return;
+        if (analysisCache[type] || type === 'network' || type === 'pages') return;
 
         setIsLoading(prev => ({ ...prev, [type]: true }));
         try {
@@ -607,51 +630,9 @@ const AnalysisView: React.FC<{ zip: any, networkLog: NetworkLogEntry[], internal
             setIsLoading(prev => ({ ...prev, [type]: false }));
         }
     }, [zip, analysisCache]);
-
-    const handleApiSearch = useCallback(async () => {
-        setIsApiLoading(true);
-        setApiResults(null);
-        setApiError(null);
-
-        try {
-            let combinedJs = '';
-            const allFiles: ZipFile[] = (Object.values(zip.files) as ZipFile[]).filter(f => !f.dir);
-            // Pre-filter JS files to significantly reduce payload size and improve AI speed/accuracy
-            const apiIndicators = /fetch|axios|XMLHttpRequest|api|http/i;
-
-            for (const file of allFiles) {
-                if (file.name.endsWith('.js')) {
-                    try {
-                        const content = await file.async('text');
-                        // Only include files that contain potential API call keywords
-                        if (apiIndicators.test(content as string)) {
-                            combinedJs += `\n\n--- FILE: ${file.name} ---\n\n${content}`;
-                        }
-                    } catch (e) {
-                        console.warn(`Could not read file ${file.name} for API scan.`, e);
-                    }
-                }
-            }
-
-            if (!combinedJs.trim()) {
-                setApiResults([]);
-                return;
-            }
-
-            const result = await scanForApiEndpoints(combinedJs, apiKeywords);
-            setApiResults(result);
-
-        } catch (error) {
-            console.error("API scan failed:", error);
-            const errorMessage = error instanceof Error ? error.message : "An unknown error occurred during the scan.";
-            setApiError(`Failed to fetch analysis. ${errorMessage}`);
-        } finally {
-            setIsApiLoading(false);
-        }
-    }, [zip, apiKeywords]);
-
+    
     useEffect(() => {
-        if (activeTab !== 'assets' && activeTab !== 'api' && activeTab !== 'pages' && !analysisCache[activeTab]) {
+        if (activeTab !== 'network' && activeTab !== 'pages' && !analysisCache[activeTab]) {
             runAnalysis(activeTab);
         }
     }, [activeTab, runAnalysis, analysisCache]);
@@ -661,6 +642,11 @@ const AnalysisView: React.FC<{ zip: any, networkLog: NetworkLogEntry[], internal
             {icon} {label}
         </button>
     );
+    
+    const FilterButton: React.FC<{ type: FilterType }> = ({ type }) => {
+        const isActive = filter === type;
+        return <button onClick={() => setFilter(type)} className={`px-3 py-1 text-sm rounded-md ${isActive ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-700 dark:bg-gray-700 dark:text-gray-200 hover:bg-gray-300 dark:hover:bg-gray-600'}`}>{type}</button>
+    }
 
     const renderContent = () => {
         const data = analysisCache[activeTab];
@@ -672,29 +658,44 @@ const AnalysisView: React.FC<{ zip: any, networkLog: NetworkLogEntry[], internal
         if (data?.error) {
             return <div className="p-4 text-center text-red-500 dark:text-red-400">{data.error}</div>;
         }
-        if (!data && activeTab !== 'assets' && activeTab !== 'api' && activeTab !== 'pages') return null;
+        if (!data && !['network', 'pages', 'assets'].includes(activeTab)) return null;
 
         switch (activeTab) {
-            case 'assets': return (
-                <div className="overflow-y-auto h-full">
-                     <table className="w-full text-sm text-left">
-                        <thead className="text-xs text-gray-700 dark:text-gray-400 uppercase bg-gray-50 dark:bg-gray-800 sticky top-0">
-                            <tr>
-                                <th scope="col" className="px-4 py-3 w-1/2">URL</th>
-                                <th scope="col" className="px-4 py-3">Status</th>
-                                <th scope="col" className="px-4 py-3">Type</th>
-                            </tr>
-                        </thead>
-                        <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
-                            {networkLog.map((entry, index) => (
-                                <tr key={index}>
-                                    <td className="px-4 py-2 font-medium text-gray-900 dark:text-white truncate" title={entry.url}>{entry.url}</td>
-                                    <td className="px-4 py-2"><span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${entry.status === 'success' ? 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300' : 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-300'}`}>{entry.status}</span></td>
-                                    <td className="px-4 py-2 text-gray-600 dark:text-gray-400">{entry.contentType}</td>
+            case 'network': return (
+                <div className="h-full flex flex-col">
+                    <div className="flex-shrink-0 p-2 border-b border-gray-200 dark:border-gray-700 bg-gray-50/80 dark:bg-gray-800/50 flex items-center gap-2">
+                        {(['All', 'Doc', 'XHR', 'JS', 'CSS', 'Img', 'Font', 'Other'] as FilterType[]).map(f => <FilterButton key={f} type={f} />)}
+                    </div>
+                    <div className="overflow-auto flex-grow">
+                         <table className="w-full text-sm text-left">
+                            <thead className="text-xs text-gray-700 dark:text-gray-400 uppercase bg-gray-50 dark:bg-gray-800 sticky top-0 z-10">
+                                <tr>
+                                    <th scope="col" className="px-4 py-3 w-2/5">Name</th>
+                                    <th scope="col" className="px-4 py-3 w-16">Status</th>
+                                    <th scope="col" className="px-4 py-3 w-24">Type</th>
+                                    <th scope="col" className="px-4 py-3">Initiator</th>
+                                    <th scope="col" className="px-4 py-3 w-24">Size</th>
                                 </tr>
-                            ))}
-                        </tbody>
-                    </table>
+                            </thead>
+                            <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
+                                {filteredNetworkLog.map((entry, index) => {
+                                    const fileName = entry.url.substring(entry.url.lastIndexOf('/') + 1) || entry.url;
+                                    const statusColor = entry.isError ? 'text-red-500' : 'text-gray-800 dark:text-gray-200';
+                                    const initiatorName = entry.initiator.substring(entry.initiator.lastIndexOf('/') + 1) || entry.initiator;
+
+                                    return (
+                                        <tr key={index} className="hover:bg-gray-50 dark:hover:bg-gray-800/50">
+                                            <td className="px-4 py-2 font-medium text-gray-900 dark:text-white truncate font-mono" title={entry.url}>{fileName}</td>
+                                            <td className={`px-4 py-2 font-semibold ${statusColor}`}>{entry.status}</td>
+                                            <td className="px-4 py-2 text-gray-600 dark:text-gray-400">{getResourceType(entry.contentType)}</td>
+                                            <td className="px-4 py-2 text-gray-600 dark:text-gray-400 truncate" title={entry.initiator}>{initiatorName}</td>
+                                            <td className="px-4 py-2 text-gray-600 dark:text-gray-400">{formatBytes(entry.size)}</td>
+                                        </tr>
+                                    )
+                                })}
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
             );
             case 'pages': return (
@@ -745,93 +746,14 @@ const AnalysisView: React.FC<{ zip: any, networkLog: NetworkLogEntry[], internal
                     ))}
                 </div>
             );
-            case 'api': return (
-                <div className="p-4 sm:p-6 h-full flex flex-col">
-                    <div className="flex-shrink-0">
-                        <p className="text-sm text-gray-600 dark:text-gray-400 mb-2">
-                            Enter keywords (e.g., "login", "user") to find related API calls or client routes, or leave blank to scan for all. The AI will analyze only relevant JavaScript files for efficiency.
-                        </p>
-                        <div className="flex gap-3">
-                            <input
-                                type="text"
-                                value={apiKeywords}
-                                onChange={(e) => setApiKeywords(e.target.value)}
-                                placeholder="Keywords (optional)"
-                                className="flex-grow w-full px-3 py-2 bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
-                                disabled={isApiLoading}
-                                onKeyDown={(e) => { if (e.key === 'Enter') handleApiSearch(); }}
-                            />
-                            <button
-                                onClick={handleApiSearch}
-                                disabled={isApiLoading}
-                                className="inline-flex items-center justify-center px-4 py-2 font-semibold text-white bg-blue-600 rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:bg-blue-400 dark:disabled:bg-blue-800 disabled:cursor-wait"
-                            >
-                                {isApiLoading ? <LoaderIcon className="animate-spin h-5 w-5" /> : <SearchIcon className="h-5 w-5" />}
-                                <span className="ml-2">{isApiLoading ? 'Scanning...' : 'Scan'}</span>
-                            </button>
-                        </div>
-                    </div>
-
-                    <div className="mt-4 flex-grow overflow-y-auto relative">
-                        {isApiLoading && (
-                            <div className="absolute inset-0 flex items-center justify-center bg-white/50 dark:bg-gray-900/50">
-                                <LoaderIcon className="h-8 w-8 animate-spin text-blue-500" />
-                            </div>
-                        )}
-                        {apiError && (
-                            <div className="p-4 text-center text-red-500 dark:text-red-400">{apiError}</div>
-                        )}
-                        {apiResults && (
-                            apiResults.length > 0 ? (
-                                <table className="w-full text-sm text-left">
-                                    <thead className="text-xs text-gray-700 dark:text-gray-400 uppercase bg-gray-50 dark:bg-gray-800 sticky top-0 z-10">
-                                        <tr>
-                                            <th scope="col" className="px-4 py-3 w-28">Type / Method</th>
-                                            <th scope="col" className="px-4 py-3">Path</th>
-                                            <th scope="col" className="px-4 py-3">Purpose / Context</th>
-                                            <th scope="col" className="px-4 py-3">Source File</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
-                                        {apiResults.map((req: any, index: number) => (
-                                            <tr key={index} className="hover:bg-gray-50 dark:hover:bg-gray-800/50">
-                                                <td className="px-4 py-2 font-mono font-semibold">
-                                                    {req.type === 'INTERNAL_ROUTE' ? (
-                                                        <span className="text-purple-600 dark:text-purple-400">ROUTE</span>
-                                                    ) : (
-                                                        <span className="text-blue-600 dark:text-blue-400">{req.method?.toUpperCase() || 'GET'}</span>
-                                                    )}
-                                                </td>
-                                                <td className="px-4 py-2 font-medium text-gray-900 dark:text-white truncate font-mono" title={req.path}>{req.path}</td>
-                                                <td className="px-4 py-2 text-gray-600 dark:text-gray-400" title={req.purpose}>{req.purpose}</td>
-                                                <td className="px-4 py-2 text-gray-500 dark:text-gray-400 truncate" title={req.clueFile}>{req.clueFile}</td>
-                                            </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
-                            ) : (
-                                <div className="flex items-center justify-center h-full text-gray-500">
-                                    <p>No potential API calls or routes found matching your criteria.</p>
-                                </div>
-                            )
-                        )}
-                        {!apiResults && !isApiLoading && (
-                            <div className="flex items-center justify-center h-full text-gray-500">
-                                <p>Click "Scan" to begin analysis.</p>
-                            </div>
-                        )}
-                    </div>
-                </div>
-            );
         }
     };
 
     return (
         <div className="h-full flex flex-col">
             <div className="flex border-b border-gray-200 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-800/50 px-2 flex-shrink-0" role="tablist">
-                <TabButton id="assets" label={`Asset Log (${networkLog.length})`} icon={<ClipboardListIcon className="h-5 w-5"/>} />
+                <TabButton id="network" label={`Network (${networkLog.length})`} icon={<NetworkIcon className="h-5 w-5"/>} />
                 <TabButton id="pages" label={`Site Pages (${internalLinks.length})`} icon={<SitemapIcon className="h-5 w-5"/>} />
-                <TabButton id="api" label="API & Route Scanner" icon={<DatabaseIcon className="h-5 w-5"/>} />
                 <TabButton id="tech" label="Technology Stack" icon={<LayersIcon className="h-5 w-5"/>} />
                 <TabButton id="vitals" label="Page Vitals" icon={<NewspaperIcon className="h-5 w-5"/>} />
             </div>
@@ -928,7 +850,7 @@ export const InspectorView: React.FC<{
     };
 
      const baseUrl = useMemo(() => {
-        const mainDocRequest = result.networkLog.find(entry => entry.contentType.includes('html') && entry.status === 'success');
+        const mainDocRequest = result.networkLog.find(entry => entry.contentType.includes('html') && !entry.isError);
         try {
             // Use the final URL from the network log to correctly handle redirects.
             if (mainDocRequest) {

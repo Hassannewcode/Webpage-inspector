@@ -2,12 +2,16 @@ export type AppPhase = 'initial' | 'downloading' | 'post-download-prompt' | 'ret
 
 export type NetworkLogStatus = 'success' | 'error';
 
-export interface NetworkLogEntry {
+export type NetworkLogEntry = {
     url: string;
-    status: NetworkLogStatus;
-    statusText: string;
+    status: number; // HTTP status code, e.g., 200, 404. 0 for internal errors.
+    statusText: string; // e.g., "OK", "Not Found"
     contentType: string;
-}
+    initiator: string; // URL of the file that requested this resource. 'initial' for the root document.
+    size: number; // size in bytes
+    isError: boolean;
+};
+
 
 export interface FileNode {
     name: string;

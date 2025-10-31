@@ -142,60 +142,6 @@ export const runLighthouseAudit = async (fileList: string, htmlContent: string):
     }
 };
 
-export const scanForApiEndpoints = async (jsContent: string, keywords: string): Promise<any[]> => {
-    const prompt = `
-        Analyze the following concatenated JavaScript files to identify potential API endpoints AND client-side page routes.
-
-        Look for:
-        1. API calls using 'fetch', 'axios', or 'XMLHttpRequest'.
-        2. Client-side routing definitions (e.g., in React Router <Route path="...">, Vue Router, or Angular Router) that define application paths.
-        
-        ${keywords ? `The user is specifically interested in items related to these keywords: "${keywords}". Prioritize these.` : ''}
-
-        For each item found, extract the following information:
-        - type: Classify as either 'API_ENDPOINT' or 'INTERNAL_ROUTE'.
-        - method: For API_ENDPOINT, the HTTP method (e.g., 'GET', 'POST'). For INTERNAL_ROUTE, you may omit this field or set it to an empty string.
-        - path: The URL, path, or route pattern.
-        - purpose: A brief, inferred description of what the endpoint or route does.
-        - clueFile: The name of the source file where the clue was found (from the '--- FILE: ... ---' markers).
-
-        Return ONLY an array of JSON objects. If nothing is found, return an empty array.
-
-        JavaScript Content:
-        ${jsContent.slice(0, 50000)}
-    `;
-
-    const response: GenerateContentResponse = await ai.models.generateContent({
-        model: proModel,
-        contents: prompt,
-        config: {
-            responseMimeType: "application/json",
-            responseSchema: {
-                type: Type.ARRAY,
-                items: {
-                    type: Type.OBJECT,
-                    properties: {
-                        type: { type: Type.STRING, enum: ['API_ENDPOINT', 'INTERNAL_ROUTE'] },
-                        method: { type: Type.STRING },
-                        path: { type: Type.STRING },
-                        purpose: { type: Type.STRING },
-                        clueFile: { type: Type.STRING },
-                    },
-                    required: ['type', 'path', 'purpose', 'clueFile'],
-                }
-            }
-        }
-    });
-    
-    try {
-        return JSON.parse(response.text);
-    } catch(e) {
-        console.error("Failed to parse API endpoints JSON:", response.text, e);
-        throw new Error("AI returned an invalid response for the API scan.");
-    }
-};
-
-
 export const getEthicalQuestion = async (): Promise<string> => {
     const prompt = `
         Generate a short, open-ended ethical scenario (around 2-3 sentences) for a penetration tester. The scenario should involve discovering a potential backdoor, an undocumented administrative function, or a deliberately weakened security control. It should test the user's practical, ethical reasoning.

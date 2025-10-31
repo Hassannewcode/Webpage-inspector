@@ -1,5 +1,7 @@
 
 
+
+
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { UrlInputForm } from './components/UrlInputForm';
 import { Disclaimer } from './components/Disclaimer';
@@ -265,7 +267,7 @@ const App: React.FC = () => {
     setWarnings(prev => [...prev, warning]);
   }, []);
 
-  const handleFetch = useCallback(async (fetchUrl: string) => {
+  const handleFetch = useCallback(async (fetchUrl: string, options: { headers: Record<string, string>, userAgent: string }) => {
     if (!fetchUrl) {
       setError('Please enter a valid URL.');
       setPhase('error');
@@ -285,7 +287,7 @@ const App: React.FC = () => {
       const name = urlObject.hostname;
       setSiteName(name);
 
-      const { zip, networkLog, failedUrls, internalLinks } = await fetchWebsiteSource(fullUrl, handleProgressUpdate, handleAddWarning);
+      const { zip, networkLog, failedUrls, internalLinks } = await fetchWebsiteSource(fullUrl, options, handleProgressUpdate, handleAddWarning);
       setScanResult({ zip, networkLog, internalLinks });
       
       if (failedUrls.length > 0) {
@@ -399,7 +401,7 @@ const App: React.FC = () => {
               <UrlInputForm
                 url={url}
                 setUrl={setUrl}
-                onFetch={() => handleFetch(url)}
+                onFetch={handleFetch}
                 phase={phase}
               />
 

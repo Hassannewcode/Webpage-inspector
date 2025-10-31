@@ -80,11 +80,13 @@ export const ClipboardListIcon: React.FC<IconProps> = ({ className }) => (
     </svg>
 );
 
-export const DatabaseIcon: React.FC<IconProps> = ({ className }) => (
+export const NetworkIcon: React.FC<IconProps> = ({ className }) => (
     <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
-      <ellipse cx="12" cy="5" rx="9" ry="3" />
-      <path d="M3 5V19A9 3 0 0 0 21 19V5" />
-      <path d="M3 12A9 3 0 0 0 21 12" />
+        <rect x="3" y="15" width="5" height="5" rx="1" />
+        <rect x="16" y="15" width="5" height="5" rx="1" />
+        <rect x="9.5" y="3" width="5" height="5" rx="1" />
+        <path d="M5.5 15v-3.5a2.5 2.5 0 0 1 5 0V15" />
+        <path d="M18.5 15v-3.5a2.5 2.5 0 0 0-5 0V15" />
     </svg>
 );
 
