@@ -1,0 +1,5 @@
+{
+  "name": "Web Page Inspector ",
+  "description": "An application that fetches a website's source code, allows in-browser inspection, and uses AI to provide a detailed analysis of its structure and technology.",
+  "requestFramePermissions": []
+}

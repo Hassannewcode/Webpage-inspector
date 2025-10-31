@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Web Page Source Downloader</title>
+    <script src="https://cdn.tailwindcss.com?plugins=typography"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <!-- Add Acorn for JS AST Parsing -->
+    <script src="https://cdn.jsdelivr.net/npm/acorn/dist/acorn.js"></script>
+    <!-- Add PrismJS for syntax highlighting -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css" />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-core.min.js" defer></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/plugins/autoloader/prism-autoloader.min.js" defer></script>
+    <!-- Add js-beautify for code formatting -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/js-beautify/1.14.7/beautify.min.js" defer></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/js-beautify/1.14.7/beautify-css.min.js" defer></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/js-beautify/1.14.7/beautify-html.min.js" defer></script>
+    <!-- Add marked for Markdown parsing -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js" defer></script>
+    <style>
+      body {
+          transition: background-color 0.5s ease;
+          position: relative;
+          overflow-x: hidden;
+      }
+      body.light-mode {
+          background-color: #f0f9ff;
+      }
+      body.dark-mode {
+          background-color: #111827; /* A slightly lighter, more standard dark background (gray-900) */
+      }
+
+      .interactive-bg {
+          position: fixed;
+          top: 0;
+          left: 0;
+          width: 100%;
+          height: 100%;
+          z-index: -1;
+          overflow: hidden;
+          pointer-events: none;
+      }
+
+      .cloud {
+          position: absolute;
+          border-radius: 50%;
+          filter: blur(100px);
+          opacity: 0;
+          animation-iteration-count: infinite;
+          animation-timing-function: linear;
+          will-change: transform, opacity;
+      }
+
+      /* Light Mode Clouds */
+      body.light-mode .cloud-1 { background-color: #a7c5ff; }
+      body.light-mode .cloud-2 { background-color: #c4b5fd; }
+      body.light-mode .cloud-3 { background-color: #f9a8d4; }
+      body.light-mode .cloud-4 { background-color: #a5f3fc; }
+
+      /* Dark Mode Clouds */
+      body.dark-mode .cloud-1 { background-color: #3b82f6; }
+      body.dark-mode .cloud-2 { background-color: #8b5cf6; }
+      body.dark-mode .cloud-3 { background-color: #ec4899; }
+      body.dark-mode .cloud-4 { background-color: #0e7490; }
+
+      .cloud-1 {
+          width: 600px; height: 600px;
+          top: -25%; left: -10%;
+          animation-name: drift-1;
+          animation-duration: 70s;
+      }
+      .cloud-2 {
+          width: 700px; height: 700px;
+          top: 60%; left: 70%;
+          animation-name: drift-2;
+          animation-duration: 80s;
+      }
+      .cloud-3 {
+          width: 500px; height: 500px;
+          top: 20%; left: 40%;
+          animation-name: drift-3;
+          animation-duration: 60s;
+      }
+       .cloud-4 {
+          width: 550px; height: 550px;
+          top: 80%; left: 5%;
+          animation-name: drift-4;
+          animation-duration: 90s;
+      }
+
+      @keyframes drift-1 {
+          0% { transform: translate(0, 0); opacity: 0; }
+          25% { opacity: var(--cloud-opacity, 0.5); }
+          75% { opacity: var(--cloud-opacity, 0.5); }
+          100% { transform: translate(120vw, 30vh) scale(1.5); opacity: 0; }
+      }
+      @keyframes drift-2 {
+          0% { transform: translate(0, 0); opacity: 0; }
+          25% { opacity: var(--cloud-opacity, 0.4); }
+          75% { opacity: var(--cloud-opacity, 0.4); }
+          100% { transform: translate(-130vw, -20vh) scale(0.8); opacity: 0; }
+      }
+      @keyframes drift-3 {
+          0% { transform: translate(0, 0); opacity: 0; }
+          25% { opacity: var(--cloud-opacity, 0.3); }
+          75% { opacity: var(--cloud-opacity, 0.3); }
+          100% { transform: translate(80vw, -40vh) scale(1.2); opacity: 0; }
+      }
+       @keyframes drift-4 {
+          0% { transform: translate(0, 0); opacity: 0; }
+          25% { opacity: var(--cloud-opacity, 0.45); }
+          75% { opacity: var(--cloud-opacity, 0.45); }
+          100% { transform: translate(110vw, -10vh) scale(1.1); opacity: 0; }
+      }
+      
+      body.light-mode { --cloud-opacity: 0.6; }
+      body.dark-mode { --cloud-opacity: 0.2; }
+
+    </style>
+  <script type="importmap">
+{
+  "imports": {
+    "@google/genai": "https://aistudiocdn.com/@google/genai@^1.17.0",
+    "react-dom/": "https://aistudiocdn.com/react-dom@^19.1.1/",
+    "react/": "https://aistudiocdn.com/react@^19.1.1/",
+    "react": "https://aistudiocdn.com/react@^19.1.1"
+  }
+}
+</script>
+</head>
+  <body class="light-mode dark:dark-mode">
+    <div class="interactive-bg">
+        <div class="cloud cloud-1"></div>
+        <div class="cloud cloud-2"></div>
+        <div class="cloud cloud-3"></div>
+        <div class="cloud cloud-4"></div>
+    </div>
+    <div id="root"></div>
+    <script type="module" src="/index.tsx"></script>
+  </body>
+</html>
