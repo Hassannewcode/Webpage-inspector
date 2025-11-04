@@ -1,7 +1,3 @@
-
-
-
-
 import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { UrlInputForm } from './components/UrlInputForm';
 import { Disclaimer } from './components/Disclaimer';
@@ -12,6 +8,7 @@ import { AlertTriangleIcon, RefreshCwIcon, CodeIcon, HistoryIcon } from './compo
 import { AppPhase, NetworkLogEntry, HistoryEntry } from './types';
 import { HistorySidebar } from './components/HistorySidebar';
 import { getKV, setKV, getSession, setSession, deleteSession as idbDeleteSession, clearAll as idbClearAll } from './utils/idb';
+import { ThemeSwitcher } from './components/ThemeSwitcher';
 
 
 declare const JSZip: any;
@@ -23,6 +20,8 @@ const formatEtr = (ms: number): string => {
   const minutes = Math.floor(ms / 60000);
   return `About ${minutes} minute${minutes > 1 ? 's' : ''} remaining...`;
 };
+
+type Theme = 'light' | 'dark';
 
 const App: React.FC = () => {
   const [url, setUrl] = useState<string>('');
@@ -41,6 +40,33 @@ const App: React.FC = () => {
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [isLoaded, setIsLoaded] = useState(false);
+  const [theme, setTheme] = useState<Theme>('light');
+
+  // --- Theme Management ---
+  useEffect(() => {
+    const savedTheme = localStorage.getItem('theme') as Theme | null;
+    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+    const initialTheme = savedTheme || (prefersDark ? 'dark' : 'light');
+    setTheme(initialTheme);
+  }, []);
+
+  useEffect(() => {
+    if (theme === 'dark') {
+      document.documentElement.classList.add('dark');
+      document.body.classList.add('dark-mode');
+      document.body.classList.remove('light-mode');
+    } else {
+      document.documentElement.classList.remove('dark');
+      document.body.classList.add('light-mode');
+      document.body.classList.remove('dark-mode');
+    }
+    localStorage.setItem('theme', theme);
+  }, [theme]);
+
+  const toggleTheme = () => {
+    setTheme(prevTheme => prevTheme === 'light' ? 'dark' : 'light');
+  };
+
 
   // --- Session Management ---
 
@@ -267,7 +293,7 @@ const App: React.FC = () => {
     setWarnings(prev => [...prev, warning]);
   }, []);
 
-  const handleFetch = useCallback(async (fetchUrl: string, options: { headers: Record<string, string>, userAgent: string }) => {
+  const handleFetch = useCallback(async (fetchUrl: string, options: { headers: Record<string, string>, userAgent: string }, engine: 'v1' | 'v2') => {
     if (!fetchUrl) {
       setError('Please enter a valid URL.');
       setPhase('error');
@@ -287,7 +313,7 @@ const App: React.FC = () => {
       const name = urlObject.hostname;
       setSiteName(name);
 
-      const { zip, networkLog, failedUrls, internalLinks } = await fetchWebsiteSource(fullUrl, options, handleProgressUpdate, handleAddWarning);
+      const { zip, networkLog, failedUrls, internalLinks } = await fetchWebsiteSource(fullUrl, options, handleProgressUpdate, handleAddWarning, engine);
       setScanResult({ zip, networkLog, internalLinks });
       
       if (failedUrls.length > 0) {
@@ -357,9 +383,9 @@ const App: React.FC = () => {
 
   if (!isLoaded) {
     return (
-      <div className="min-h-screen flex flex-col items-center justify-center">
+      <div className="min-h-screen flex flex-col items-center justify-center dark:bg-gray-900">
         <Loader />
-        <p className="mt-4 text-gray-500">Loading application...</p>
+        <p className="mt-4 text-gray-500 dark:text-gray-400">Loading application...</p>
       </div>
     );
   }
@@ -374,14 +400,17 @@ const App: React.FC = () => {
             </span>
             <h1 className="text-4xl font-bold text-gray-900 dark:text-white" style={{textShadow: '1px 1px 3px rgba(0,0,0,0.2)'}}>Website Source Inspector</h1>
           </div>
-          <button
-              onClick={() => setIsHistoryOpen(true)}
-              className="absolute top-0 right-0 inline-flex items-center gap-2 px-3 py-2 text-sm font-semibold text-gray-600 dark:text-gray-300 bg-white/50 dark:bg-gray-800/50 rounded-lg hover:bg-white/80 dark:hover:bg-gray-700/80 backdrop-blur-sm"
-              aria-label="Open inspection history"
-          >
-              <HistoryIcon className="h-5 w-5" />
-              History
-          </button>
+          <div className="absolute top-0 right-0 flex items-center gap-2">
+             <ThemeSwitcher theme={theme} onToggle={toggleTheme} />
+             <button
+                onClick={() => setIsHistoryOpen(true)}
+                className="inline-flex items-center gap-2 px-3 py-2 text-sm font-semibold text-gray-600 dark:text-gray-300 bg-white/50 dark:bg-gray-800/50 rounded-lg hover:bg-white/80 dark:hover:bg-gray-700/80 backdrop-blur-sm"
+                aria-label="Open inspection history"
+            >
+                <HistoryIcon className="h-5 w-5" />
+                History
+            </button>
+          </div>
           <p className="text-lg text-gray-700 dark:text-gray-300" style={{textShadow: '1px 1px 2px rgba(0,0,0,0.1)'}}>
             Fetch a website's static source, then use AI to analyze its architecture, security, and secrets.
           </p>

@@ -11,7 +11,7 @@ export const createAiChat = (context: string): Chat => {
   const chat: Chat = ai.chats.create({
     model,
     config: {
-      systemInstruction: `You are an expert web developer and security analyst. The user has provided you with the complete source code of a website, including a file list and all file contents. Your knowledge is now confined to this provided source code. Answer the user's questions based *only* on the provided files. Do not guess or use external knowledge. When you reference a file, use its full path. Your responses should be formatted in Markdown. \n\nCONTEXT:\n${context}`,
+      systemInstruction: `You are an expert web developer and security analyst. The user has provided you with the complete source code of a website, including a network log summary, a file list, and all file contents. Your knowledge is now confined to this provided data. Answer the user's questions based *only* on the provided files and network log. Do not guess or use external knowledge. When you reference a file, use its full path. Your responses should be formatted in Markdown. \n\nCONTEXT:\n${context}`,
     },
   });
   return chat;

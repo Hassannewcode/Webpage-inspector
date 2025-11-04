@@ -9,6 +9,8 @@ import { ScanResults } from './components/ScanResults';
 interface CerberusEngineProps {
     zip: any;
     networkLog: NetworkLogEntry[];
+    onScanStart: () => void;
+    onScanEnd: () => void;
 }
 
 type ScanPhase = 'idle' | 'running' | 'complete';
@@ -30,7 +32,7 @@ const formatEtr = (ms: number): string => {
   return `About ${minutes} minute${minutes > 1 ? 's' : ''} remaining...`;
 };
 
-export const CerberusEngine: React.FC<CerberusEngineProps> = ({ zip, networkLog }) => {
+export const CerberusEngine: React.FC<CerberusEngineProps> = ({ zip, networkLog, onScanStart, onScanEnd }) => {
     const [phase, setPhase] = useState<ScanPhase>('idle');
     const [results, setResults] = useState<ScanResult | null>(null);
     const [moduleStatus, setModuleStatus] = useState<ModuleStatus[]>(initialModules);
@@ -46,6 +48,7 @@ export const CerberusEngine: React.FC<CerberusEngineProps> = ({ zip, networkLog 
     };
 
     const runScan = useCallback(async (keywords: string = '') => {
+        onScanStart();
         setPhase('running');
         setCurrentTask('Initializing engine...');
         setScanProgress({ completed: 0, total: 1 });
@@ -154,13 +157,15 @@ export const CerberusEngine: React.FC<CerberusEngineProps> = ({ zip, networkLog 
         setEtr('');
         setResults(scanResults);
         setPhase('complete');
+        onScanEnd();
 
-    }, [zip, networkLog]);
+    }, [zip, networkLog, onScanStart, onScanEnd]);
 
     const handleReset = () => {
         setPhase('idle');
         setResults(null);
         setModuleStatus(initialModules);
+        onScanEnd();
     };
 
     if (phase === 'idle') {

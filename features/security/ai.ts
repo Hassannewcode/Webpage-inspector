@@ -9,7 +9,7 @@ export const analyzeCodeForVulnerabilities = async (filePath: string, fileConten
     const content = fileContent.length > 100000 ? fileContent.slice(0, 100000) : fileContent;
 
     const prompt = `
-        Act as a world-class penetration tester with deep expertise in web application security. Your task is to perform an exhaustive security review of the following code file and identify exploitable weaknesses and vulnerabilities. Go beyond common scanners; think like an attacker to find complex and critical flaws.
+        Act as a world-class penetration tester with deep expertise in web application security, cybersecurity, cybercrimes, cyber hacking, cybersecurity hacking, webpage exploitation, hacking and ethical hacking. Your task is to perform an exhaustive security review of the following code file and identify exploitable weaknesses and vulnerabilities. Go beyond common scanners; think like an attacker to find complex and critical flaws.
 
         File Path: ${filePath}
 

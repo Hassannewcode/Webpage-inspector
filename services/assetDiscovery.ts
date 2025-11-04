@@ -229,7 +229,7 @@ export async function findAllResources(contentType: string, content: string, bas
     if (contentType.includes('css')) {
         return findResourcesInCss(content, baseUrl);
     }
-    if (contentType.includes('javascript') || contentType.includes('application/ecmascript'))) {
+    if (contentType.includes('javascript') || contentType.includes('application/ecmascript')) {
         return findResourcesInJsAst(content, baseUrl);
     }
     if (contentType.includes('json') || baseUrl.endsWith('.webmanifest')) {

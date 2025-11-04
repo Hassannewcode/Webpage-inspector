@@ -72,21 +72,123 @@ async function cachedFetch(url: string, options: RequestInit, forceFresh = false
     }
 }
 
-
-export const fetchWebsiteSource = async (
+// --- V2 Multitasking Downloader ---
+const runV2Download = (
     url: string,
     options: { headers: Record<string, string>, userAgent: string },
     onProgress: (progress: { message: string; downloaded: number; total: number }) => void,
     onWarning: (warning: { url: string; message: string }) => void
 ): Promise<{ zip: any; networkLog: NetworkLogEntry[]; failedUrls: string[]; internalLinks: string[] }> => {
+    return new Promise(resolve => {
+        const CONCURRENCY_LIMIT = 8;
+        const zip = new JSZip();
+        const networkLog: NetworkLogEntry[] = [];
+        const failedUrls: string[] = [];
+        const internalLinks = new Set<string>();
+
+        const downloadQueue: { url: string, initiator: string }[] = [{ url, initiator: 'Initial Request' }];
+        const processedUrls = new Set<string>([url]);
+        let downloadedCount = 0;
+        let activeDownloads = 0;
+
+        const fetchOptions: RequestInit = {
+            headers: { ...options.headers },
+        };
+        if (options.userAgent) {
+            (fetchOptions.headers as Record<string,string>)['User-Agent'] = options.userAgent;
+        }
+
+        const checkCompletion = () => {
+            if (downloadQueue.length === 0 && activeDownloads === 0) {
+                onProgress({ message: 'Finalizing ZIP file...', downloaded: downloadedCount, total: processedUrls.size });
+                resolve({ zip, networkLog, failedUrls, internalLinks: Array.from(internalLinks) });
+            }
+        };
+
+        const handleDownloadError = (error: Error, currentUrl: string, initiator: string) => {
+            const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+            console.error(`Failed to download ${currentUrl}:`, error);
+            failedUrls.push(currentUrl);
+            networkLog.push({ url: currentUrl, status: 0, statusText: 'Download Failed', contentType: 'unknown', initiator, size: 0, isError: true });
+            onWarning({ url: currentUrl, message: `Download failed. ${errorMessage}` });
+        };
+        
+        const processResponse = async (response: Response, currentUrl: string, initiator: string) => {
+            const contentType = response.headers.get('content-type') || 'application/octet-stream';
+            const content = await response.blob();
+            const size = content.size;
+
+            networkLog.push({ url: currentUrl, status: response.status, statusText: response.statusText, contentType, initiator, size, isError: !response.ok });
+
+            if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+            
+            const relativePath = new URL(currentUrl).pathname.substring(1) || 'index.html';
+            zip.file(relativePath, content);
+
+            if (contentType.includes('text') || contentType.includes('javascript') || contentType.includes('json')) {
+                const textContent = await content.text();
+                const newResources = await findAllResources(contentType, textContent, currentUrl);
+                newResources.forEach(res => {
+                    if (!processedUrls.has(res)) {
+                        processedUrls.add(res);
+                        downloadQueue.push({ url: res, initiator: currentUrl });
+                    }
+                });
+                if (currentUrl === url && contentType.includes('html')) {
+                    const pageLinks = findInternalLinksInHtml(textContent, currentUrl);
+                    pageLinks.forEach(link => internalLinks.add(link));
+                }
+            }
+            downloadedCount++;
+        };
+
+        const processQueue = () => {
+            while (activeDownloads < CONCURRENCY_LIMIT && downloadQueue.length > 0) {
+                activeDownloads++;
+                const { url: currentUrl, initiator } = downloadQueue.shift()!;
+                
+                onProgress({ message: `Downloading: ${currentUrl}`, downloaded: downloadedCount, total: processedUrls.size });
+
+                cachedFetch(currentUrl, fetchOptions)
+                    .then(response => processResponse(response, currentUrl, initiator))
+                    .catch(error => handleDownloadError(error, currentUrl, initiator))
+                    .finally(() => {
+                        activeDownloads--;
+                        processQueue(); // Look for more work
+                    });
+            }
+            // If we've run out of work, check if we're done
+            if (downloadQueue.length === 0 && activeDownloads === 0) {
+                checkCompletion();
+            }
+        };
+        
+        // Start the process
+        processQueue();
+    });
+};
+
+
+export const fetchWebsiteSource = async (
+    url: string,
+    options: { headers: Record<string, string>, userAgent: string },
+    onProgress: (progress: { message: string; downloaded: number; total: number }) => void,
+    onWarning: (warning: { url: string; message: string }) => void,
+    engine: 'v1' | 'v2' = 'v1'
+): Promise<{ zip: any; networkLog: NetworkLogEntry[]; failedUrls: string[]; internalLinks: string[] }> => {
     
     fetchCache.clear();
+
+    if (engine === 'v2') {
+        return runV2Download(url, options, onProgress, onWarning);
+    }
+
+    // --- V1 Engine: Classic Sequential Downloader ---
     const zip = new JSZip();
     const networkLog: NetworkLogEntry[] = [];
     const failedUrls: string[] = [];
     const internalLinks = new Set<string>();
     
-    // The queue now stores objects to track initiators
     const downloadQueue: { url: string, initiator: string }[] = [{ url, initiator: 'Initial Request' }];
     const processedUrls = new Set<string>([url]);
 
@@ -98,7 +200,6 @@ export const fetchWebsiteSource = async (
     if (options.userAgent) {
         (fetchOptions.headers as Record<string,string>)['User-Agent'] = options.userAgent;
     }
-
 
     while (downloadQueue.length > 0) {
         const { url: currentUrl, initiator } = downloadQueue.shift()!;
@@ -129,7 +230,6 @@ export const fetchWebsiteSource = async (
             const relativePath = new URL(currentUrl).pathname.substring(1) || 'index.html';
             zip.file(relativePath, content);
 
-            // If it's a text-based file, parse it for more resources
             if (contentType.includes('text') || contentType.includes('javascript') || contentType.includes('json')) {
                 const textContent = await content.text();
                 const newResources = await findAllResources(contentType, textContent, currentUrl);
@@ -140,7 +240,6 @@ export const fetchWebsiteSource = async (
                     }
                 });
                 
-                // If this is the root HTML document, scan it for internal page links
                 if (currentUrl === url && contentType.includes('html')) {
                     const pageLinks = findInternalLinksInHtml(textContent, currentUrl);
                     pageLinks.forEach(link => internalLinks.add(link));

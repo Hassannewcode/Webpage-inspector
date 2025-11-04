@@ -6,7 +6,8 @@ import { formatCode, deobfuscate } from '../utils/prettify';
 import { DownloadIcon, RefreshCwIcon, FileTextIcon, ImageIcon, LoaderIcon, BotIcon, AlertTriangleIcon, ClipboardListIcon, NetworkIcon, FileSearchIcon, SearchIcon, SparklesIcon, GaugeCircleIcon, ChevronRightIcon, FolderIcon, FolderOpenIcon, LayersIcon, NewspaperIcon, MessageSquareIcon, Wand2Icon, EyeIcon, XIcon, ShieldAlertIcon, SitemapIcon } from './Icons';
 import { Chat } from '@google/genai';
 import { EthicsSurveyModal } from './EthicsSurveyModal';
-import { CerberusEngine } from '../features/security/CerberusEngine';
+import { CerberusEngineV2 } from '../features/security/CerberusEngineV2';
+
 
 declare const Prism: any;
 declare const marked: any;
@@ -93,7 +94,7 @@ const Gauge: React.FC<{ score: number, category: string }> = ({ score, category 
 
 
 // --- AI CHAT COMPONENT ---
-const AiChat: React.FC<{ zip: any }> = ({ zip }) => {
+const AiChat: React.FC<{ zip: any; networkLog: NetworkLogEntry[] }> = ({ zip, networkLog }) => {
     const [isOpen, setIsOpen] = useState(false);
     const [chat, setChat] = useState<Chat | null>(null);
     const [messages, setMessages] = useState<AiChatMessage[]>([]);
@@ -114,7 +115,13 @@ const AiChat: React.FC<{ zip: any }> = ({ zip }) => {
         setIsLoading(true);
 
         try {
-            let context = "File List:\n";
+            let context = "--- NETWORK LOG SUMMARY ---\n";
+            context += "URL | Status | Content-Type | Size\n";
+            networkLog.forEach(entry => {
+                context += `${entry.url} | ${entry.status} | ${entry.contentType} | ${formatBytes(entry.size)}\n`;
+            });
+
+            context += "\n--- FILE LIST ---\n";
             const allFiles = Object.keys(zip.files).filter(name => !zip.files[name].dir);
             context += allFiles.join('\n') + "\n\n--- FILE CONTENTS ---\n";
 
@@ -123,7 +130,7 @@ const AiChat: React.FC<{ zip: any }> = ({ zip }) => {
                 if (file) {
                     try {
                         const content = await file.async('text');
-                        context += `\n--- FILE: ${fileName} ---\n${content}\n`;
+                        context += `\n--- FILE: ${fileName} ---\n${content.slice(0, 20000)}\n`;
                     } catch (e) {
                          context += `\n--- FILE: ${fileName} ---\n[Binary or unreadable content]\n`;
                     }
@@ -131,14 +138,14 @@ const AiChat: React.FC<{ zip: any }> = ({ zip }) => {
             }
             const chatSession = createAiChat(context);
             setChat(chatSession);
-            setMessages([{ role: 'model', text: 'Hello! I am your AI code assistant. Ask me anything about this website\'s source code.' }]);
+            setMessages([{ role: 'model', text: "Hello! I am your AI code assistant. Ask me anything about this website's source code or network activity." }]);
         } catch (e) {
             console.error("Failed to initialize AI Chat:", e);
             setMessages([{ role: 'model', text: 'Sorry, I was unable to initialize. Please try again later.' }]);
         } finally {
             setIsLoading(false);
         }
-    }, [zip]);
+    }, [zip, networkLog]);
 
     const handleSendMessage = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -834,6 +841,10 @@ export const InspectorView: React.FC<{
     const [activeTab, setActiveTab] = useState<MainTab>('explorer');
     const [isEthicsModalOpen, setIsEthicsModalOpen] = useState(false);
     const [hasPassedEthicsCheck, setHasPassedEthicsCheck] = useState(false);
+    const [isSecurityScanActive, setIsSecurityScanActive] = useState(false);
+    
+    const handleScanStart = () => setIsSecurityScanActive(true);
+    const handleScanEnd = () => setIsSecurityScanActive(false);
 
     const handleOpenSecurityTab = () => {
         if (hasPassedEthicsCheck) {
@@ -874,12 +885,12 @@ export const InspectorView: React.FC<{
 
     return (
         <div className="bg-white/70 dark:bg-slate-800 backdrop-blur-lg rounded-xl shadow-2xl border border-white/30 dark:border-slate-700/50">
-            <div className="flex flex-col sm:flex-row justify-between items-start mb-4 gap-3 px-4 pt-4">
+            <div className="flex flex-col sm:flex-row justify-between items-center mb-4 gap-4 px-4 pt-4">
                 <div>
                     <h3 className="text-xl font-semibold text-gray-900 dark:text-white">Inspector</h3>
                     <p className="text-sm text-gray-500 dark:text-gray-400 break-all">{siteName}</p>
                 </div>
-                <div className="flex gap-3 flex-shrink-0">
+                <div className="flex items-center gap-3 flex-shrink-0 flex-wrap justify-end">
                     <button onClick={onDownload} className="inline-flex items-center justify-center px-4 py-2 font-semibold text-white bg-blue-600 rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors">
                         <DownloadIcon className="-ml-1 mr-2 h-5 w-5" /> Download .zip
                     </button>
@@ -910,18 +921,24 @@ export const InspectorView: React.FC<{
                 <div className="flex-grow overflow-hidden bg-white dark:bg-gray-900/50 relative">
                     <div hidden={activeTab !== 'explorer'} className="h-full"><FileExplorer zip={result.zip} baseUrl={baseUrl} /></div>
                     <div hidden={activeTab !== 'analysis'} className="h-full"><AnalysisView zip={result.zip} networkLog={result.networkLog} internalLinks={result.internalLinks} /></div>
-                    <div hidden={activeTab !== 'security'} className="h-full overflow-y-auto"><CerberusEngine zip={result.zip} networkLog={result.networkLog} /></div>
+                    
+                    <div hidden={activeTab !== 'security'} className="h-full flex flex-col bg-white dark:bg-slate-900">
+                        <div className="flex-grow overflow-y-auto relative">
+                            <CerberusEngineV2 zip={result.zip} networkLog={result.networkLog} onScanStart={handleScanStart} onScanEnd={handleScanEnd} />
+                        </div>
+                    </div>
+                    
                     <div hidden={activeTab !== 'audit'} className="h-full overflow-y-auto"><LighthouseAudit zip={result.zip} /></div>
                 </div>
             </div>
-            
-             {isEthicsModalOpen && (
+
+            {isEthicsModalOpen && (
                 <EthicsSurveyModal
                     onClose={() => setIsEthicsModalOpen(false)}
                     onSuccess={handleSurveySuccess}
                 />
             )}
-            <AiChat zip={result.zip} />
+            <AiChat zip={result.zip} networkLog={result.networkLog} />
         </div>
     );
 };

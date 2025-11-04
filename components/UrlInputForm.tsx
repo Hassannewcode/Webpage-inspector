@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { DownloadIcon, LoaderIcon, ChevronRightIcon, InfoIcon, ShieldAlertIcon } from './Icons';
 import { AppPhase } from '../types';
+import { EngineSwitcher } from './EngineSwitcher';
 
 // --- Configuration for Auto Emulation ---
 const emulationConfig = {
@@ -65,16 +66,16 @@ const generateRandomHeaders = (): Record<string, string> => {
     };
 };
 
-// FIX: Define the UrlInputFormProps interface to resolve the TypeScript error.
 interface UrlInputFormProps {
   url: string;
   setUrl: (url: string) => void;
-  onFetch: (fetchUrl: string, options: { headers: Record<string, string>, userAgent: string }) => void;
+  onFetch: (fetchUrl: string, options: { headers: Record<string, string>, userAgent: string }, engine: 'v1' | 'v2') => void;
   phase: AppPhase;
 }
 
 export const UrlInputForm: React.FC<UrlInputFormProps> = ({ url, setUrl, onFetch, phase }) => {
   const [isAdvancedOpen, setIsAdvancedOpen] = useState(false);
+  const [downloadEngine, setDownloadEngine] = useState<'v1' | 'v2'>('v2');
   
   // New state for advanced options
   const [emulationMode, setEmulationMode] = useState<'auto' | 'manual'>('auto');
@@ -145,39 +146,60 @@ export const UrlInputForm: React.FC<UrlInputFormProps> = ({ url, setUrl, onFetch
         }
     }
     
-    onFetch(url, { headers: headersToSend, userAgent: userAgentToSend });
+    onFetch(url, { headers: headersToSend, userAgent: userAgentToSend }, downloadEngine);
   };
   
   const isLoading = phase === 'downloading' || phase === 'retrying';
 
   return (
     <form onSubmit={handleSubmit}>
-      <label htmlFor="url-input" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-        Website URL
-      </label>
-      <div className="flex flex-col sm:flex-row gap-3">
-        <input
-          id="url-input"
-          type="text"
-          value={url}
-          onChange={(e) => setUrl(e.target.value)}
-          placeholder="e.g., example.com"
-          className="flex-grow w-full px-4 py-3 bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-shadow outline-none"
-          disabled={isLoading}
-          aria-label="Website URL"
-        />
-        <button
-          type="submit"
-          className="inline-flex items-center justify-center px-6 py-3 font-semibold text-white bg-blue-600 rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:bg-blue-400 dark:disabled:bg-blue-800 disabled:cursor-not-allowed transition-colors duration-200"
-          disabled={isLoading || !url}
-        >
-          {isLoading ? (
-            <><LoaderIcon className="animate-spin -ml-1 mr-3 h-5 w-5" />Fetching...</>
-          ) : (
-            <><DownloadIcon className="-ml-1 mr-2 h-5 w-5" />Fetch Source</>
-          )}
-        </button>
-      </div>
+        <div className="flex flex-col sm:flex-row gap-3 items-start">
+            <div className="flex-grow w-full">
+                <label htmlFor="url-input" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                    Website URL
+                </label>
+                <input
+                  id="url-input"
+                  type="text"
+                  value={url}
+                  onChange={(e) => setUrl(e.target.value)}
+                  placeholder="e.g., example.com"
+                  className="w-full px-4 py-3 bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-shadow outline-none"
+                  disabled={isLoading}
+                  aria-label="Website URL"
+                />
+            </div>
+            <div className="flex-shrink-0 w-full sm:w-auto">
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2 text-center sm:text-left">
+                    Download Engine
+                </label>
+                <div className="flex justify-center">
+                    <EngineSwitcher 
+                        version={downloadEngine}
+                        setVersion={setDownloadEngine}
+                        disabled={isLoading}
+                    />
+                </div>
+            </div>
+        </div>
+
+        <div className="mt-4 flex flex-col sm:flex-row gap-3 items-center">
+            <button
+              type="submit"
+              className="w-full sm:w-auto inline-flex items-center justify-center px-6 py-3 font-semibold text-white bg-blue-600 rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:bg-blue-400 dark:disabled:bg-blue-800 disabled:cursor-not-allowed transition-colors duration-200"
+              disabled={isLoading || !url}
+            >
+              {isLoading ? (
+                <><LoaderIcon className="animate-spin -ml-1 mr-3 h-5 w-5" />Fetching...</>
+              ) : (
+                <><DownloadIcon className="-ml-1 mr-2 h-5 w-5" />Fetch Source</>
+              )}
+            </button>
+            <p className="text-xs text-gray-500 dark:text-gray-400 text-center sm:text-left">
+                <strong>V1 Engine:</strong> Classic (Sequential). &nbsp;
+                <strong>V2 Engine:</strong> Multitasking (Faster Downloads).
+            </p>
+        </div>
       
       <div className="mt-4">
         <button type="button" onClick={() => setIsAdvancedOpen(!isAdvancedOpen)} className="flex items-center text-sm font-semibold text-blue-600 dark:text-blue-400 hover:underline">
