@@ -262,3 +262,21 @@ export const MoonIcon: React.FC<IconProps> = ({ className }) => (
         <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
     </svg>
 );
+
+export const HammerIcon: React.FC<IconProps> = ({ className }) => (
+    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+        <path d="m15 12-8.373 8.373a1 1 0 1 1-1.414-1.414L12.586 12l-1.85-1.85a2.121 2.121 0 1 1 3 3L15 12Z"/>
+        <path d="M9.343 14.657 14.657 9.343"/>
+        <path d="M19.757 4.243 12 12"/>
+        <path d="m21.172 5.657-1.414-1.414"/>
+        <path d="m5.657 21.172-1.414-1.414"/>
+    </svg>
+);
+
+export const Link2Icon: React.FC<IconProps> = ({ className }) => (
+    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+        <path d="M9 17H7A5 5 0 0 1 7 7h2"/>
+        <path d="M15 7h2a5 5 0 0 1 0 10h-2"/>
+        <line x1="8" x2="16" y1="12" y2="12"/>
+    </svg>
+);

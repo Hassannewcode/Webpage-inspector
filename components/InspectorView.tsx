@@ -1,12 +1,14 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
-import { NetworkLogEntry, ZippedFile, FileNode, AiChatMessage, TechStack, PageVitals } from '../types';
-import { runLighthouseAudit, analyzeTechStack, getPageVitals, createAiChat, explainFile } from '../services/aiService';
+import { NetworkLogEntry, ZippedFile, FileNode, AiChatMessage, TechStack, PageVitals, ApiEndpoint } from '../types';
+import { runLighthouseAudit, analyzeTechStack, getPageVitals, createAiChat, explainFile, analyzeApiEndpoints } from '../services/aiService';
 import { buildFileTree, formatBytes, getLanguageFromPath } from '../utils/fileUtils';
 import { formatCode, deobfuscate } from '../utils/prettify';
-import { DownloadIcon, RefreshCwIcon, FileTextIcon, ImageIcon, LoaderIcon, BotIcon, AlertTriangleIcon, ClipboardListIcon, NetworkIcon, FileSearchIcon, SearchIcon, SparklesIcon, GaugeCircleIcon, ChevronRightIcon, FolderIcon, FolderOpenIcon, LayersIcon, NewspaperIcon, MessageSquareIcon, Wand2Icon, EyeIcon, XIcon, ShieldAlertIcon, SitemapIcon } from './Icons';
+import { DownloadIcon, RefreshCwIcon, FileTextIcon, ImageIcon, LoaderIcon, BotIcon, AlertTriangleIcon, ClipboardListIcon, NetworkIcon, FileSearchIcon, SearchIcon, SparklesIcon, GaugeCircleIcon, ChevronRightIcon, FolderIcon, FolderOpenIcon, LayersIcon, NewspaperIcon, MessageSquareIcon, Wand2Icon, EyeIcon, XIcon, ShieldAlertIcon, SitemapIcon, HammerIcon, ServerIcon } from './Icons';
 import { Chat } from '@google/genai';
 import { EthicsSurveyModal } from './EthicsSurveyModal';
+import { CerberusEngine } from '../features/security/CerberusEngine';
 import { CerberusEngineV2 } from '../features/security/CerberusEngineV2';
+import { RecreationView } from './RecreationView';
 
 
 declare const Prism: any;
@@ -17,7 +19,10 @@ declare const marked: any;
 interface ZipFile {
     name: string;
     dir: boolean;
-    async(type: 'text' | 'base64' | 'arraybuffer'): Promise<string | ArrayBuffer>;
+    // FIX: Use overloads for more specific return types from async()
+    async(type: 'text' | 'base64'): Promise<string>;
+    async(type: 'arraybuffer'): Promise<ArrayBuffer>;
+    async(type: string): Promise<string | ArrayBuffer>;
     _data?: {
         uncompressedSize: number;
         // The `data` property holds the raw, uncompressed content. It's typically
@@ -126,7 +131,7 @@ const AiChat: React.FC<{ zip: any; networkLog: NetworkLogEntry[] }> = ({ zip, ne
             context += allFiles.join('\n') + "\n\n--- FILE CONTENTS ---\n";
 
             for (const fileName of allFiles) {
-                const file = zip.file(fileName);
+                const file: ZipFile | null = zip.file(fileName);
                 if (file) {
                     try {
                         const content = await file.async('text');
@@ -284,7 +289,7 @@ const FileExplorer: React.FC<{ zip: any, baseUrl: string }> = ({ zip, baseUrl })
 
         if (['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'ico'].includes(extension)) {
             setContentType('image');
-            const base64Content = await zipEntry.async('base64') as string;
+            const base64Content = await zipEntry.async('base64');
             setFileContent(`data:image/${extension === 'svg' ? 'svg+xml' : extension};base64,${base64Content}`);
         } else if (BINARY_EXTENSIONS.has(extension)) {
             setContentType('binary');
@@ -293,7 +298,7 @@ const FileExplorer: React.FC<{ zip: any, baseUrl: string }> = ({ zip, baseUrl })
             setContentType('markdown');
             setMarkdownView('rendered');
             try {
-                const textContent = await zipEntry.async('text') as string;
+                const textContent = await zipEntry.async('text');
                 setFileContent(textContent);
                 setOriginalContent(textContent);
             } catch (e) {
@@ -303,7 +308,7 @@ const FileExplorer: React.FC<{ zip: any, baseUrl: string }> = ({ zip, baseUrl })
         } else {
             setContentType('text');
             try {
-                const textContent = await zipEntry.async('text') as string;
+                const textContent = await zipEntry.async('text');
                 const replacementCharCount = (textContent.match(/\uFFFD/g) || []).length;
                 const nonPrintableRatio = (textContent.match(/[\x00-\x08\x0B\x0C\x0E-\x1F]/g) || []).length / textContent.length;
 
@@ -576,7 +581,7 @@ const FileExplorer: React.FC<{ zip: any, baseUrl: string }> = ({ zip, baseUrl })
 
 // --- ANALYSIS VIEW COMPONENT ---
 const AnalysisView: React.FC<{ zip: any, networkLog: NetworkLogEntry[], internalLinks: string[] }> = ({ zip, networkLog, internalLinks }) => {
-    type AnalysisTab = 'network' | 'pages' | 'tech' | 'vitals';
+    type AnalysisTab = 'network' | 'pages' | 'tech' | 'vitals' | 'apiEndpoints';
     const [activeTab, setActiveTab] = useState<AnalysisTab>('network');
     const [analysisCache, setAnalysisCache] = useState<Record<string, any>>({});
     const [isLoading, setIsLoading] = useState<Record<string, boolean>>({});
@@ -618,15 +623,37 @@ const AnalysisView: React.FC<{ zip: any, networkLog: NetworkLogEntry[], internal
             let result;
             const allFiles: ZipFile[] = (Object.values(zip.files) as ZipFile[]).filter(f => !f.dir);
             const fileListStr = allFiles.map((f) => f.name).join('\n');
-            const indexHtmlFile = zip.file('index.html');
+            const indexHtmlFile: ZipFile | null = zip.file('index.html');
             const htmlContent = indexHtmlFile ? await indexHtmlFile.async('text') : '';
+            
+            let cssContentForAnalysis = '';
+            if (type === 'tech') {
+                const cssFiles = allFiles.filter(f => f.name.endsWith('.css')).slice(0, 5); // Get up to 5 CSS files
+                for (const file of cssFiles) {
+                    try {
+                        const content = await file.async('text');
+                        cssContentForAnalysis += `\n\n--- CSS File: ${file.name} ---\n${content.slice(0, 5000)}`;
+                    } catch (e) { /* ignore binary/unreadable files */ }
+                }
+            }
 
             switch (type) {
                 case 'tech':
-                    result = await analyzeTechStack(fileListStr, htmlContent);
+                    result = await analyzeTechStack(fileListStr, htmlContent, cssContentForAnalysis);
                     break;
                 case 'vitals':
                     result = await getPageVitals(htmlContent);
+                    break;
+                case 'apiEndpoints':
+                    const allTextFiles: {name: string, content: string}[] = [];
+                    const zipTextFiles = allFiles.filter(f => !/\.(png|jpg|jpeg|gif|webp|woff|woff2|eot|ttf|otf|mp3|mp4)$/i.test(f.name));
+                    for (const file of zipTextFiles) {
+                        try {
+                            const content = await file.async('text');
+                            allTextFiles.push({name: file.name, content });
+                        } catch(e) { /* ignore */ }
+                    }
+                    result = await analyzeApiEndpoints(allTextFiles);
                     break;
             }
             setAnalysisCache(prev => ({ ...prev, [type]: result }));
@@ -753,6 +780,35 @@ const AnalysisView: React.FC<{ zip: any, networkLog: NetworkLogEntry[], internal
                     ))}
                 </div>
             );
+            case 'apiEndpoints': 
+                const apiData = data as ApiEndpoint[];
+                return (
+                    <div className="overflow-y-auto h-full p-4 sm:p-6">
+                        <h3 className="text-lg font-semibold mb-3">Discovered API Endpoints</h3>
+                        <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
+                            The following API endpoints were inferred by analyzing the application's source code. This may not be a complete list.
+                        </p>
+                        {apiData.length > 0 ? (
+                            <div className="space-y-3">
+                                {apiData.map((api, index) => (
+                                    <div key={index} className="p-3 bg-gray-50 dark:bg-gray-800/50 rounded-lg border border-gray-200 dark:border-gray-700">
+                                        <div className="flex items-center gap-3">
+                                            <span className={`px-2 py-0.5 text-xs font-bold rounded ${api.method === 'GET' ? 'bg-green-100 text-green-800 dark:bg-green-900/50 dark:text-green-300' : 'bg-blue-100 text-blue-800 dark:bg-blue-900/50 dark:text-blue-300'}`}>{api.method}</span>
+                                            <code className="font-mono text-sm font-semibold text-gray-800 dark:text-gray-200 break-all">{api.endpoint}</code>
+                                        </div>
+                                        <p className="text-sm text-gray-600 dark:text-gray-400 mt-2 pl-1">{api.purpose}</p>
+                                        <p className="text-xs text-gray-500 dark:text-gray-500 mt-2 pl-1">Found in: <code>{api.filePath}</code></p>
+                                    </div>
+                                ))}
+                            </div>
+                        ) : (
+                            <div className="text-center py-8 text-gray-500">
+                                <ServerIcon className="h-10 w-10 mx-auto mb-2" />
+                                <p>No API endpoints were identified in the source code.</p>
+                            </div>
+                        )}
+                    </div>
+                );
         }
     };
 
@@ -761,6 +817,7 @@ const AnalysisView: React.FC<{ zip: any, networkLog: NetworkLogEntry[], internal
             <div className="flex border-b border-gray-200 dark:border-gray-700 bg-gray-50/50 dark:bg-gray-800/50 px-2 flex-shrink-0" role="tablist">
                 <TabButton id="network" label={`Network (${networkLog.length})`} icon={<NetworkIcon className="h-5 w-5"/>} />
                 <TabButton id="pages" label={`Site Pages (${internalLinks.length})`} icon={<SitemapIcon className="h-5 w-5"/>} />
+                <TabButton id="apiEndpoints" label="API Endpoints" icon={<ServerIcon className="h-5 w-5"/>} />
                 <TabButton id="tech" label="Technology Stack" icon={<LayersIcon className="h-5 w-5"/>} />
                 <TabButton id="vitals" label="Page Vitals" icon={<NewspaperIcon className="h-5 w-5"/>} />
             </div>
@@ -786,9 +843,9 @@ const LighthouseAudit: React.FC<{ zip: any }> = ({ zip }) => {
         try {
             const allFiles = Object.keys(zip.files).filter(name => !zip.files[name].dir);
             const fileListStr = allFiles.join('\n');
-            const indexHtmlFile = zip.file('index.html');
+            const indexHtmlFile: ZipFile | null = zip.file('index.html');
             const htmlContent = indexHtmlFile ? await indexHtmlFile.async('text') : '';
-            const result = await runLighthouseAudit(fileListStr, htmlContent as string);
+            const result = await runLighthouseAudit(fileListStr, htmlContent);
             setAuditResult(result);
         } catch (error) {
             console.error("Lighthouse audit failed:", error);
@@ -808,6 +865,7 @@ const LighthouseAudit: React.FC<{ zip: any }> = ({ zip }) => {
                 <div className="flex flex-col items-center justify-center h-full">
                     <LoaderIcon className="h-10 w-10 animate-spin text-blue-600" />
                     <p className="mt-4 text-lg font-semibold">Performing AI-Powered Audit...</p>
+                    <p className="text-sm text-gray-500 dark:text-gray-400">This may take a moment...</p>
                 </div>
             )}
             {auditResult?.error && <p className="p-4 text-red-500">{auditResult.error}</p>}
@@ -820,7 +878,7 @@ const LighthouseAudit: React.FC<{ zip: any }> = ({ zip }) => {
                         <Gauge score={auditResult.bestPractices} category="Best Practices" />
                     </div>
                     <div className="prose prose-sm sm:prose-base dark:prose-invert max-w-none break-words overflow-y-auto h-full p-2 bg-gray-50 dark:bg-slate-900 rounded-lg">
-                        <div dangerouslySetInnerHTML={{ __html: auditResult.report }} />
+                        <div dangerouslySetInnerHTML={{ __html:  typeof marked !== 'undefined' ? marked.parse(auditResult.report) : auditResult.report }} />
                     </div>
                 </div>
             )}
@@ -836,8 +894,9 @@ export const InspectorView: React.FC<{
   onDownload: () => void;
   onReset: () => void;
   saveError: string | null;
-}> = ({ result, siteName, onDownload, onReset, saveError }) => {
-    type MainTab = 'explorer' | 'analysis' | 'security' | 'audit';
+  engineVersion: 'v1' | 'v2';
+}> = ({ result, siteName, onDownload, onReset, saveError, engineVersion }) => {
+    type MainTab = 'explorer' | 'analysis' | 'security' | 'audit' | 'recreation';
     const [activeTab, setActiveTab] = useState<MainTab>('explorer');
     const [isEthicsModalOpen, setIsEthicsModalOpen] = useState(false);
     const [hasPassedEthicsCheck, setHasPassedEthicsCheck] = useState(false);
@@ -883,6 +942,37 @@ export const InspectorView: React.FC<{
         );
     };
 
+    const renderActiveTabContent = () => {
+        switch (activeTab) {
+            case 'explorer':
+                return <div className="h-full"><FileExplorer zip={result.zip} baseUrl={baseUrl} /></div>;
+            case 'analysis':
+                return <div className="h-full"><AnalysisView zip={result.zip} networkLog={result.networkLog} internalLinks={result.internalLinks} /></div>;
+            case 'security':
+                return (
+                    <div className="h-full flex flex-col bg-white dark:bg-slate-900">
+                        <div className="flex-grow overflow-y-auto relative">
+                            {engineVersion === 'v1' ? (
+                                <CerberusEngine zip={result.zip} networkLog={result.networkLog} onScanStart={handleScanStart} onScanEnd={handleScanEnd} />
+                            ) : (
+                                <CerberusEngineV2 zip={result.zip} networkLog={result.networkLog} onScanStart={handleScanStart} onScanEnd={handleScanEnd} />
+                            )}
+                        </div>
+                    </div>
+                );
+            case 'audit':
+                return <div className="h-full overflow-y-auto"><LighthouseAudit zip={result.zip} /></div>;
+            case 'recreation':
+                return (
+                    <div className="h-full">
+                        <RecreationView zip={result.zip} />
+                    </div>
+                );
+            default:
+                return null;
+        }
+    };
+
     return (
         <div className="bg-white/70 dark:bg-slate-800 backdrop-blur-lg rounded-xl shadow-2xl border border-white/30 dark:border-slate-700/50">
             <div className="flex flex-col sm:flex-row justify-between items-center mb-4 gap-4 px-4 pt-4">
@@ -916,19 +1006,11 @@ export const InspectorView: React.FC<{
                     <TabButton id="analysis" label="Analysis" icon={<SparklesIcon className="h-5 w-5" />} />
                     <TabButton id="security" label="Security" icon={<ShieldAlertIcon className="h-5 w-5" />} colorClass="red" onClick={handleOpenSecurityTab} />
                     <TabButton id="audit" label="AI Lighthouse Audit" icon={<GaugeCircleIcon className="h-5 w-5" />} />
+                    <TabButton id="recreation" label="AI Re-creation" icon={<HammerIcon className="h-5 w-5" />} colorClass="purple" />
                 </div>
 
                 <div className="flex-grow overflow-hidden bg-white dark:bg-gray-900/50 relative">
-                    <div hidden={activeTab !== 'explorer'} className="h-full"><FileExplorer zip={result.zip} baseUrl={baseUrl} /></div>
-                    <div hidden={activeTab !== 'analysis'} className="h-full"><AnalysisView zip={result.zip} networkLog={result.networkLog} internalLinks={result.internalLinks} /></div>
-                    
-                    <div hidden={activeTab !== 'security'} className="h-full flex flex-col bg-white dark:bg-slate-900">
-                        <div className="flex-grow overflow-y-auto relative">
-                            <CerberusEngineV2 zip={result.zip} networkLog={result.networkLog} onScanStart={handleScanStart} onScanEnd={handleScanEnd} />
-                        </div>
-                    </div>
-                    
-                    <div hidden={activeTab !== 'audit'} className="h-full overflow-y-auto"><LighthouseAudit zip={result.zip} /></div>
+                    {renderActiveTabContent()}
                 </div>
             </div>
 

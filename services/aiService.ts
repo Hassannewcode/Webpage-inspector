@@ -1,5 +1,5 @@
 import { GoogleGenAI, Chat, GenerateContentResponse, Type } from '@google/genai';
-import { AiChatMessage, LighthouseAudit, PageVitals, TechStack } from '../types';
+import { AiChatMessage, LighthouseAudit, PageVitals, TechStack, RecreationResult, ApiEndpoint } from '../types';
 
 // Do not ask for API_KEY, it's handled externally.
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
@@ -39,15 +39,19 @@ export const explainFile = async (filePath: string, isBinary: boolean, fileConte
     return response.text;
 };
 
-export const analyzeTechStack = async (fileList: string, htmlContent: string): Promise<TechStack> => {
+export const analyzeTechStack = async (fileList: string, htmlContent: string, cssContent: string): Promise<TechStack> => {
     const prompt = `
-        Analyze the provided file list and HTML content to identify the website's technology stack.
+        Analyze the provided file list, HTML content, and CSS content to identify the website's technology stack.
+        Pay close attention to class names, comments, and file names.
         
         File List:
         ${fileList}
 
         HTML <head> content:
         ${htmlContent.match(/<head>([\s\S]*?)<\/head>/)?.[1] || ''}
+
+        Sample CSS Content:
+        ${cssContent}
 
         Identify the following and return the response in JSON format:
         - cssFrameworks: (e.g., "Tailwind CSS", "Bootstrap", "Materialize")
@@ -94,9 +98,8 @@ export const getPageVitals = async (htmlContent: string): Promise<PageVitals> =>
 
 export const runLighthouseAudit = async (fileList: string, htmlContent: string): Promise<LighthouseAudit> => {
     const prompt = `
-        Simulate a Lighthouse audit based on the provided file list and HTML content.
-        Analyze the code for best practices, performance, accessibility, and SEO.
-        Do not mention that you are an AI or that this is a simulation.
+        Act as a world-class web performance and standards expert. Simulate a highly detailed Lighthouse audit based on the provided file list and HTML content.
+        Do not mention that you are an AI or that this is a simulation. Your tone should be that of an expert consultant providing a technical report.
         
         File List:
         ${fileList}
@@ -105,10 +108,19 @@ export const runLighthouseAudit = async (fileList: string, htmlContent: string):
         ${htmlContent.slice(0, 5000)}
 
         Your Task:
-        1. Generate a score from 0-100 for each of the four categories: performance, accessibility, seo, bestPractices.
-        2. Generate a detailed 'report' in Markdown format. The report should have a section for each category, listing specific findings, potential issues, and actionable recommendations based on the provided code. For example, if you see large image files, mention them. If you see missing alt tags, point them out.
-        
-        Return ONLY a single JSON object.
+        1.  **Generate Scores:** Provide a score from 0-100 for each of the four categories: performance, accessibility, seo, bestPractices.
+        2.  **Generate a Detailed Report:** Create a comprehensive 'report' in Markdown format. The report must be structured with a main heading for each category (e.g., "## Performance").
+            
+            Under each category heading, you must:
+            a.  Provide a short, expert summary of what the score means.
+            b.  Create a "### Key Findings" section.
+            c.  For each finding, create a sub-section with a clear title (e.g., "#### 📉 Eliminate Render-Blocking Resources").
+            d.  In each finding's sub-section, include three distinct parts:
+                -   **What's Happening:** A clear, concise explanation of the issue identified in the provided code.
+                -   **Why It Matters:** Explain the impact of this issue on user experience, performance, or SEO.
+                -   **Actionable Recommendation:** Provide a specific, detailed recommendation on how to fix the issue. If possible, reference specific file names from the provided file list.
+
+        Return ONLY a single JSON object with the scores and the detailed Markdown report.
     `;
     const response: GenerateContentResponse = await ai.models.generateContent({
         model: proModel,
@@ -235,4 +247,107 @@ export const findCdnUrl = async (failedUrl: string): Promise<string | null> => {
         return url;
     }
     return null;
+};
+
+export const recreateWebsiteStreamed = async (allFiles: { name: string, content: string }[], fileCount: number) => {
+    let context = "The user has provided the complete source code of a website. Here is the file structure and content:\n\n";
+    for (const file of allFiles) {
+        // Limit context size per file to avoid exceeding model limits
+        context += `--- FILE: ${file.name} ---\n\`\`\`\n${file.content.slice(0, 15000)}\n\`\`\`\n\n`;
+    }
+
+    const prompt = `
+        You are an expert full-stack developer. Your task is to recreate a website with 1:1 fidelity as a self-contained, simplified application. The entire recreated application MUST consist of a maximum of ${fileCount} file(s).
+
+        **CRITICAL INSTRUCTION: You MUST stream your entire process back to the user.**
+        Your output must be a stream of single-line JSON objects. Each JSON object is a distinct message. Do NOT nest JSON. Do not use markdown backticks around the JSON.
+
+        Here are the valid JSON object types you must use:
+
+        1.  **Status Update**: To mark the start and end of major phases.
+            \`{ "type": "status", "step": "step_name", "status": "running" | "complete" }\`
+            The valid \`step_name\` values are: "Initial Analysis", "Code Pre-processing", "File Generation", "Verification", "Finalizing".
+
+        2.  **Log Message**: To provide "think-aloud" commentary on your process.
+            \`{ "type": "log", "message": "Your thought or finding here." }\`
+
+        3.  **Verification Message**: To report on the self-check process.
+            \`{ "type": "verification", "message": "Your verification finding here." }\`
+
+        4.  **File Content**: When a file is complete, send its content.
+            \`{ "type": "file", "fileName": "path/to/file.html", "content": "file_content_as_string" }\`
+
+        5.  **Final Result**: The very last message in the stream.
+            \`{ "type": "result", "success": boolean, "reason": "Reason for failure, if any." }\`
+
+        **Your Required Process:**
+
+        1.  **Initial Analysis**: Start by streaming \`{"type": "status", "step": "Initial Analysis", "status": "running"}\`. Analyze the source code. Stream several \`log\` messages with your high-level findings (e.g., framework detected, complexity). When done, stream \`{"type": "status", "step": "Initial Analysis", "status": "complete"}\`.
+
+        2.  **Code Pre-processing**: Start with \`{"type": "status", "step": "Code Pre-processing", "status": "running"}\`. Conceptually "deobfuscate" and "prettify" key files to understand their logic. Stream \`log\` messages as you process files (e.g., "Processing main.js..."). Stream \`verification\` messages about what your self-check reveals (e.g., "Prettifying main.js revealed a websocket connection handler."). When done, stream \`{"type": "status", "step": "Code Pre-processing", "status": "complete"}\`.
+
+        3.  **File Generation**: Start with \`{"type": "status", "step": "File Generation", "status": "running"}\`. Generate the new files one by one. After each file is fully generated, stream it using the \`file\` type object. Ensure all content within the JSON is properly escaped. Adhere strictly to the ${fileCount} file limit. When done, stream \`{"type": "status", "step": "File Generation", "status": "complete"}\`.
+
+        4.  **Final Verification**: Start with \`{"type": "status", "step": "Verification", "status": "running"}\`. Review your generated code. Stream a few \`verification\` messages confirming you met the requirements (e.g., "Self-check: All assets are correctly inlined as base64 URIs."). When done, stream \`{"type": "status", "step": "Verification", "status": "complete"}\`.
+
+        5.  **Finalizing**: Start with \`{"type": "status", "step": "Finalizing", "status": "running"}\`. Then, as the very last output, stream the final \`result\` object.
+        
+        **Feasibility Evaluation:**
+        If at any point you determine a 1:1 re-creation is not possible, you must stop and stream the final \`result\` object with \`success: false\` and a clear \`reason\`.
+
+        **Website Source Code Context:**
+        ${context}
+    `;
+
+    return ai.models.generateContentStream({
+        model: proModel,
+        contents: prompt,
+    });
+};
+
+export const analyzeApiEndpoints = async (allFiles: { name: string, content: string }[]): Promise<ApiEndpoint[]> => {
+    let context = "Scan the following JavaScript and HTML files to identify all API endpoints the application communicates with. Look for `fetch`, `axios`, or `XMLHttpRequest` calls.\n\n";
+    
+    const relevantFiles = allFiles.filter(f => /\.(js|jsx|ts|tsx|html)$/.test(f.name));
+
+    for (const file of relevantFiles) {
+        context += `--- FILE: ${file.name} ---\n\`\`\`\n${file.content.slice(0, 10000)}\n\`\`\`\n\n`;
+    }
+
+    const prompt = `
+        Analyze the provided source code to identify all API endpoints. For each endpoint, infer the likely HTTP method and its business logic purpose.
+        
+        **Context:**
+        ${context}
+
+        Return ONLY a single JSON array of objects.
+    `;
+
+    const response: GenerateContentResponse = await ai.models.generateContent({
+        model: proModel,
+        contents: prompt,
+        config: {
+            responseMimeType: 'application/json',
+            responseSchema: {
+                type: Type.ARRAY,
+                items: {
+                    type: Type.OBJECT,
+                    properties: {
+                        endpoint: { type: Type.STRING, description: "The relative or absolute API endpoint URL." },
+                        method: { type: Type.STRING, description: "The inferred HTTP method (e.g., GET, POST, PUT, DELETE, UNKNOWN)." },
+                        purpose: { type: Type.STRING, description: "A brief explanation of what the API call likely does." },
+                        filePath: { type: Type.STRING, description: "The file where this endpoint was found." }
+                    },
+                    required: ['endpoint', 'method', 'purpose', 'filePath']
+                }
+            }
+        }
+    });
+
+    try {
+        return JSON.parse(response.text);
+    } catch (e) {
+        console.error("Failed to parse API endpoints JSON", e, response.text);
+        throw new Error("AI returned invalid JSON for API endpoint analysis.");
+    }
 };

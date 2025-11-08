@@ -1,7 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { DownloadIcon, LoaderIcon, ChevronRightIcon, InfoIcon, ShieldAlertIcon } from './Icons';
 import { AppPhase } from '../types';
-import { EngineSwitcher } from './EngineSwitcher';
 
 // --- Configuration for Auto Emulation ---
 const emulationConfig = {
@@ -69,13 +68,12 @@ const generateRandomHeaders = (): Record<string, string> => {
 interface UrlInputFormProps {
   url: string;
   setUrl: (url: string) => void;
-  onFetch: (fetchUrl: string, options: { headers: Record<string, string>, userAgent: string }, engine: 'v1' | 'v2') => void;
+  onFetch: (fetchUrl: string, options: { headers: Record<string, string>, userAgent: string }) => void;
   phase: AppPhase;
 }
 
 export const UrlInputForm: React.FC<UrlInputFormProps> = ({ url, setUrl, onFetch, phase }) => {
   const [isAdvancedOpen, setIsAdvancedOpen] = useState(false);
-  const [downloadEngine, setDownloadEngine] = useState<'v1' | 'v2'>('v2');
   
   // New state for advanced options
   const [emulationMode, setEmulationMode] = useState<'auto' | 'manual'>('auto');
@@ -146,7 +144,7 @@ export const UrlInputForm: React.FC<UrlInputFormProps> = ({ url, setUrl, onFetch
         }
     }
     
-    onFetch(url, { headers: headersToSend, userAgent: userAgentToSend }, downloadEngine);
+    onFetch(url, { headers: headersToSend, userAgent: userAgentToSend });
   };
   
   const isLoading = phase === 'downloading' || phase === 'retrying';
@@ -169,18 +167,6 @@ export const UrlInputForm: React.FC<UrlInputFormProps> = ({ url, setUrl, onFetch
                   aria-label="Website URL"
                 />
             </div>
-            <div className="flex-shrink-0 w-full sm:w-auto">
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2 text-center sm:text-left">
-                    Download Engine
-                </label>
-                <div className="flex justify-center">
-                    <EngineSwitcher 
-                        version={downloadEngine}
-                        setVersion={setDownloadEngine}
-                        disabled={isLoading}
-                    />
-                </div>
-            </div>
         </div>
 
         <div className="mt-4 flex flex-col sm:flex-row gap-3 items-center">
@@ -196,8 +182,7 @@ export const UrlInputForm: React.FC<UrlInputFormProps> = ({ url, setUrl, onFetch
               )}
             </button>
             <p className="text-xs text-gray-500 dark:text-gray-400 text-center sm:text-left">
-                <strong>V1 Engine:</strong> Classic (Sequential). &nbsp;
-                <strong>V2 Engine:</strong> Multitasking (Faster Downloads).
+               Use the global <strong>Engine Switcher</strong> in the header to choose between Classic (V1) or Multitasking (V2) engines.
             </p>
         </div>
       

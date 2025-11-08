@@ -2,13 +2,14 @@ import React, { useState, useCallback, useRef, useEffect } from 'react';
 import { UrlInputForm } from './components/UrlInputForm';
 import { Disclaimer } from './components/Disclaimer';
 import { Loader } from './components/Loader';
-import { fetchWebsiteSource, downloadZipFile, retryFailedDownloads } from './services/downloader';
+import { fetchWebsiteSource, downloadZipFile, retryFailedDownloads, retryFailedDownloadsAsDataURI } from './services/downloader';
 import { InspectorView } from './components/InspectorView';
-import { AlertTriangleIcon, RefreshCwIcon, CodeIcon, HistoryIcon } from './components/Icons';
+import { AlertTriangleIcon, RefreshCwIcon, CodeIcon, HistoryIcon, Link2Icon } from './components/Icons';
 import { AppPhase, NetworkLogEntry, HistoryEntry } from './types';
 import { HistorySidebar } from './components/HistorySidebar';
 import { getKV, setKV, getSession, setSession, deleteSession as idbDeleteSession, clearAll as idbClearAll } from './utils/idb';
 import { ThemeSwitcher } from './components/ThemeSwitcher';
+import { EngineSwitcher } from './components/EngineSwitcher';
 
 
 declare const JSZip: any;
@@ -22,6 +23,7 @@ const formatEtr = (ms: number): string => {
 };
 
 type Theme = 'light' | 'dark';
+type EngineVersion = 'v1' | 'v2';
 
 const App: React.FC = () => {
   const [url, setUrl] = useState<string>('');
@@ -41,6 +43,8 @@ const App: React.FC = () => {
   const [history, setHistory] = useState<HistoryEntry[]>([]);
   const [isLoaded, setIsLoaded] = useState(false);
   const [theme, setTheme] = useState<Theme>('light');
+  const [engineVersion, setEngineVersion] = useState<EngineVersion>('v2');
+
 
   // --- Theme Management ---
   useEffect(() => {
@@ -293,7 +297,7 @@ const App: React.FC = () => {
     setWarnings(prev => [...prev, warning]);
   }, []);
 
-  const handleFetch = useCallback(async (fetchUrl: string, options: { headers: Record<string, string>, userAgent: string }, engine: 'v1' | 'v2') => {
+  const handleFetch = useCallback(async (fetchUrl: string, options: { headers: Record<string, string>, userAgent: string }) => {
     if (!fetchUrl) {
       setError('Please enter a valid URL.');
       setPhase('error');
@@ -313,7 +317,7 @@ const App: React.FC = () => {
       const name = urlObject.hostname;
       setSiteName(name);
 
-      const { zip, networkLog, failedUrls, internalLinks } = await fetchWebsiteSource(fullUrl, options, handleProgressUpdate, handleAddWarning, engine);
+      const { zip, networkLog, failedUrls, internalLinks } = await fetchWebsiteSource(fullUrl, options, handleProgressUpdate, handleAddWarning, engineVersion);
       setScanResult({ zip, networkLog, internalLinks });
       
       if (failedUrls.length > 0) {
@@ -331,7 +335,7 @@ const App: React.FC = () => {
         downloadStartTimeRef.current = null;
         setEtr('');
     }
-  }, [handleProgressUpdate, handleAddWarning]);
+  }, [handleProgressUpdate, handleAddWarning, engineVersion]);
   
   const handleSkipRetry = () => {
     setPhase('viewing');
@@ -373,6 +377,41 @@ const App: React.FC = () => {
     }
   };
 
+  const handleRetryAsDataURI = async () => {
+    if (!scanResult || failedDownloads.length === 0) return;
+
+    setPhase('retrying');
+    setRetryAttempt(prev => prev + 1);
+    setEtr('');
+    setProgressMessage('Resolving assets as Data URIs...');
+
+    try {
+        const { zip, networkLog, stillFailedUrls } = await retryFailedDownloadsAsDataURI(
+            failedDownloads,
+            scanResult.zip,
+            scanResult.networkLog,
+            (progress) => {
+                const progressText = `[${progress.downloaded}/${progress.total}] ${progress.message}`;
+                setProgressMessage(progressText);
+            }
+        );
+        setScanResult({ zip, networkLog, internalLinks: scanResult.internalLinks });
+
+        if (stillFailedUrls.length > 0) {
+            setFailedDownloads(stillFailedUrls);
+            setPhase('post-download-prompt'); 
+        } else {
+            setFailedDownloads([]);
+            setPhase('viewing'); 
+        }
+    } catch (err) {
+        console.error("Data URI resolution failed:", err);
+        setError("An error occurred during the Data URI resolution process. Continuing with available files.");
+        setPhase('viewing'); 
+    }
+  };
+
+
   const handleDownload = useCallback(async () => {
     if (!scanResult?.zip || !siteName) return;
     const sanitizedSiteName = siteName.replace(/\./g, '_');
@@ -400,7 +439,15 @@ const App: React.FC = () => {
             </span>
             <h1 className="text-4xl font-bold text-gray-900 dark:text-white" style={{textShadow: '1px 1px 3px rgba(0,0,0,0.2)'}}>Website Source Inspector</h1>
           </div>
-          <div className="absolute top-0 right-0 flex items-center gap-2">
+          <div className="absolute top-0 right-0 flex items-center gap-4">
+            <div className="flex items-center gap-2">
+                <label className="hidden sm:block text-sm font-semibold text-gray-600 dark:text-gray-300">Engine:</label>
+                <EngineSwitcher
+                    version={engineVersion}
+                    setVersion={setEngineVersion}
+                    disabled={isLoading}
+                />
+            </div>
              <ThemeSwitcher theme={theme} onToggle={toggleTheme} />
              <button
                 onClick={() => setIsHistoryOpen(true)}
@@ -424,6 +471,7 @@ const App: React.FC = () => {
               onDownload={handleDownload}
               onReset={() => handleReset(true)}
               saveError={saveError}
+              engineVersion={engineVersion}
             />
           ) : (
              <div className="bg-white/70 dark:bg-slate-800 backdrop-blur-lg p-4 sm:p-8 rounded-xl shadow-2xl border border-white/30 dark:border-slate-700/50">
@@ -526,8 +574,8 @@ const App: React.FC = () => {
                             <div className="mt-2">
                                 <p className="text-sm text-gray-500 dark:text-gray-400">
                                      {retryAttempt === 0
-                                        ? `${failedDownloads.length} asset(s) failed to download, possibly due to network restrictions (CORS). You can proceed, or attempt a Force Retry. This enhanced process uses multiple proxies and even employs AI to find public CDN alternatives for common libraries.`
-                                        : `Still unable to fetch ${failedDownloads.length} asset(s). This may be due to strict server security. You can try another Force Retry or continue without them.`
+                                        ? `${failedDownloads.length} asset(s) failed to download, possibly due to network restrictions (CORS). You can proceed, or attempt one of the advanced recovery methods below.`
+                                        : `Still unable to fetch ${failedDownloads.length} asset(s). This may be due to strict server security. You can try another recovery method or continue without them.`
                                     }
                                 </p>
                                 <div className="mt-3 max-h-32 overflow-y-auto rounded-md bg-gray-50 dark:bg-gray-700/50 p-2 border border-gray-200 dark:border-gray-700">
@@ -547,6 +595,14 @@ const App: React.FC = () => {
                     >
                         <RefreshCwIcon className="-ml-1 mr-2 h-5 w-5"/>
                         Force Retry
+                    </button>
+                    <button
+                        type="button"
+                        className="mt-3 sm:mt-0 w-full inline-flex justify-center rounded-md border border-purple-300 dark:border-purple-700 shadow-sm px-4 py-2 bg-purple-100 dark:bg-purple-900/50 text-base font-medium text-purple-700 dark:text-purple-200 hover:bg-purple-200 dark:hover:bg-purple-800/80 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-purple-500 sm:ml-3 sm:w-auto sm:text-sm"
+                        onClick={handleRetryAsDataURI}
+                    >
+                        <Link2Icon className="-ml-1 mr-2 h-5 w-5"/>
+                        Resolve via Data URI
                     </button>
                     <button
                         type="button"

@@ -57,3 +57,21 @@ export interface HistoryEntry {
     siteName: string;
     timestamp: number;
 }
+
+export interface RecreatedFile {
+    fileName: string;
+    content: string;
+}
+
+export interface RecreationResult {
+    success: boolean;
+    reason?: string;
+    files?: RecreatedFile[];
+}
+
+export interface ApiEndpoint {
+    endpoint: string;
+    method: string;
+    purpose: string;
+    filePath: string;
+}

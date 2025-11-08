@@ -97,7 +97,7 @@ export const ScanResultsV2: React.FC<ScanResultsProps> = ({ results, scanTime, b
                         <h2 className="text-xl font-bold">Security Scan Report (V2 Engine)</h2>
                         <div className="flex flex-wrap gap-x-4 gap-y-2 mt-2">
                             {Object.entries(summary).map(([severity, count]) => (
-                                count > 0 && (
+                                Number(count) > 0 && (
                                     <div key={severity} className="flex items-center gap-2">
                                         <span className={`h-3 w-3 rounded-full ${getSeverityClasses(severity as VulnerabilitySeverity)}`}></span>
                                         <span className="text-sm font-medium">{severity}: <strong>{count as React.ReactNode}</strong></span>
@@ -114,35 +114,33 @@ export const ScanResultsV2: React.FC<ScanResultsProps> = ({ results, scanTime, b
                 </div>
                  <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div>
-                        <label htmlFor="rescan-input" className="text-sm font-medium text-gray-700 dark:text-gray-300">Refine Scan</label>
+                        <label htmlFor="rescan-input-v2" className="text-sm font-medium text-gray-700 dark:text-gray-300">Refine Scan</label>
                         <div className="flex gap-2 mt-1">
-                            <input id="rescan-input" type="text" value={searchKeywords} onChange={(e) => setSearchKeywords(e.target.value)}
+                            <input id="rescan-input-v2" type="text" value={searchKeywords} onChange={(e) => setSearchKeywords(e.target.value)}
                                 placeholder="e.g., 'authentication', 'payment'"
                                 className="flex-grow w-full px-3 py-2 text-sm bg-white dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none"
-                                onKeyDown={(e) => { if (e.key === 'Enter') handleRescan(); }} />
-                            <button onClick={handleRescan}
-                                className="inline-flex items-center justify-center px-4 py-2 font-semibold text-white bg-blue-600 rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
-                                <RefreshCwIcon className="h-4 w-4 mr-2" /> Refine
+                                onKeyDown={(e) => { if (e.key === 'Enter') handleRescan(); }}
+                            />
+                            <button onClick={handleRescan} className="inline-flex items-center justify-center px-4 py-2 font-semibold text-white bg-blue-600 rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500">
+                                <RefreshCwIcon className="h-4 w-4 mr-2" />
+                                Refine
                             </button>
                         </div>
                     </div>
-                    <div className="bg-gray-100 dark:bg-gray-700/50 p-3 rounded-lg">
-                        <h4 className="text-sm font-semibold text-center mb-2">V2 Engine Performance</h4>
-                        <div className="flex justify-around items-center text-center">
-                            <div>
-                                <p className="text-xs text-gray-500 dark:text-gray-400">Scan Time</p>
-                                <p className="text-lg font-bold">{formatTime(scanTime)}s</p>
-                            </div>
-                            <div className="text-yellow-500">
-                                <p className="text-xs">Personal Best</p>
-                                <p className="text-lg font-bold flex items-center gap-1"><TrophyIcon className="h-5 w-5" />{bestTime ? `${formatTime(bestTime)}s` : 'N/A'}</p>
-                            </div>
-                             <div>
-                                <p className="text-xs text-gray-500 dark:text-gray-400">Target Time</p>
-                                <p className="text-lg font-bold text-gray-400 dark:text-gray-500">{bestTime ? `< ${formatTime(bestTime * 0.75)}s` : 'N/A'}</p>
-                            </div>
+                     <div className="text-center md:text-right">
+                        <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Scan Performance</label>
+                        <div className={`mt-1 p-2 rounded-lg text-center ${isNewRecord ? 'bg-yellow-100 dark:bg-yellow-900/50' : 'bg-gray-100 dark:bg-gray-700/50'}`}>
+                            {isNewRecord && (
+                                <div className="flex items-center justify-center gap-2 text-yellow-600 dark:text-yellow-300 font-bold text-sm mb-1">
+                                    <TrophyIcon className="h-4 w-4" />
+                                    New Record!
+                                </div>
+                            )}
+                            <p className="text-sm">Scan Time: <span className="font-bold font-mono">{formatTime(scanTime)}s</span></p>
+                            <p className="text-xs text-gray-500 dark:text-gray-400">
+                                {bestTime ? `Best: ${formatTime(bestTime)}s` : 'First run with V2 engine.'}
+                            </p>
                         </div>
-                        {isNewRecord && <p className="text-center text-xs font-bold text-green-500 mt-2 animate-pulse">New Record!</p>}
                     </div>
                 </div>
             </header>
@@ -157,9 +155,14 @@ export const ScanResultsV2: React.FC<ScanResultsProps> = ({ results, scanTime, b
                             </button>
                             {openCategories.has(category) && (
                                 <ul className="divide-y divide-gray-200 dark:divide-gray-700">
-                                    {findingsByRiskCategory[category].sort((a,b) => severityOrder[a.severity] - severityOrder[b.severity]).map((finding, idx) => (
+                                    {findingsByRiskCategory[category]
+                                        .sort((a,b) => severityOrder[a.severity] - severityOrder[b.severity])
+                                        .map((finding, idx) => (
                                         <li key={idx} onClick={() => setSelectedFinding(finding)} className={`p-3 cursor-pointer border-l-4 ${selectedFinding === finding ? 'bg-blue-100 dark:bg-blue-900/50 border-blue-500' : 'border-transparent hover:bg-gray-100 dark:hover:bg-gray-800/80'}`}>
-                                            <div className="flex justify-between items-start gap-2"><p className="font-semibold text-sm truncate">{finding.title}</p><SeverityBadge severity={finding.severity} /></div>
+                                            <div className="flex justify-between items-start gap-2">
+                                                <p className="font-semibold text-sm truncate">{finding.title}</p>
+                                                <SeverityBadge severity={finding.severity} />
+                                            </div>
                                             <p className="text-xs text-gray-500 dark:text-gray-400 truncate mt-1">{finding.filePath}</p>
                                         </li>
                                     ))}
@@ -168,11 +171,15 @@ export const ScanResultsV2: React.FC<ScanResultsProps> = ({ results, scanTime, b
                         </div>
                     ))}
                 </aside>
+
                 <main className="w-3/5 overflow-y-auto p-6">
                     {selectedFinding ? (
-                        <div className="prose prose-sm sm:prose-base dark:prose-invert max-w-none">
-                            <SeverityBadge severity={selectedFinding.severity} /><h3 className="mt-2">{selectedFinding.title}</h3>
+                         <div className="prose prose-sm sm:prose-base dark:prose-invert max-w-none">
+                            <SeverityBadge severity={selectedFinding.severity} />
+                            <h3 className="mt-2">{selectedFinding.title}</h3>
+
                             <p>{selectedFinding.description}</p>
+
                             <h4>Details</h4>
                             <ul>
                                 <li><strong>File:</strong> <code>{selectedFinding.filePath}</code></li>
@@ -180,21 +187,48 @@ export const ScanResultsV2: React.FC<ScanResultsProps> = ({ results, scanTime, b
                                 <li><strong>Finding Type:</strong> {selectedFinding.findingType}</li>
                                 <li><strong>Source:</strong> {selectedFinding.sourceModule}</li>
                             </ul>
-                            {selectedFinding.codeSnippet && (<><h4>Code Snippet</h4><pre><code className="language-clike">{selectedFinding.codeSnippet}</code></pre></>)}
-                            {selectedFinding.recommendation && (<><h4>Recommendation</h4><p>{selectedFinding.recommendation}</p></>)}
+
+                            {selectedFinding.codeSnippet && (
+                                <>
+                                    <h4>Code Snippet</h4>
+                                    <pre><code className="language-clike">{selectedFinding.codeSnippet}</code></pre>
+                                </>
+                            )}
+                            
+                             {selectedFinding.recommendation && (
+                                <>
+                                    <h4>Recommendation</h4>
+                                    <p>{selectedFinding.recommendation}</p>
+                                </>
+                            )}
                         </div>
                     ) : (
                         <div className="flex flex-col items-center justify-center h-full text-center text-gray-500">
                            {results.findings.length > 0 ? (
-                                <><InfoIcon className="h-12 w-12 mb-4" /><h3 className="text-lg font-semibold">Select a finding to view details</h3><p>Choose an item from the list on the left to see the full report.</p></>
+                                <>
+                                <InfoIcon className="h-12 w-12 mb-4" />
+                                <h3 className="text-lg font-semibold">Select a finding to view details</h3>
+                                <p>Choose an item from the list on the left to see the full report.</p>
+                                </>
                            ) : (
-                                <><CheckCircleIcon className="h-12 w-12 mb-4 text-green-500" /><h3 className="text-lg font-semibold">No significant code vulnerabilities found!</h3><p>The automated scan did not detect any high-risk issues in the application code.</p></>
+                                <>
+                                <CheckCircleIcon className="h-12 w-12 mb-4 text-green-500" />
+                                <h3 className="text-lg font-semibold">No significant code vulnerabilities found!</h3>
+                                <p>The automated scan did not detect any high-risk issues in the application code.</p>
+                                </>
                            )}
                            <div className="mt-8 w-full prose prose-sm dark:prose-invert">
                                <h4>HTTP Header Analysis</h4>
                                <table className="w-full">
                                    <thead><tr><th>Header</th><th>Status</th></tr></thead>
-                                   <tbody>{results.headerCheck.map(h => (<tr key={h.header}><td><code>{h.header}</code></td><td>{h.present ? <span className="text-green-500 font-bold">Present</span> : <span className="text-red-500 font-bold">Missing</span>}</td></tr>))}</tbody>
+                                   <tbody>
+                                    {results.headerCheck.map(h => (
+                                        <tr key={h.header}>
+                                            <td><code>{h.header}</code></td>
+                                            <td>{h.present ? <span className="text-green-500 font-bold">Present</span> : <span className="text-red-500 font-bold">Missing</span>}</td>
+                                        </tr>
+                                    ))}
+                                   </tbody>
                                </table>
                                <p className="text-xs text-gray-400">Note: Missing headers reduce security but may be intentional. See recommendations for best practices.</p>
                            </div>
